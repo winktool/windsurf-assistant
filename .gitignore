@@ -19,7 +19,7 @@ _wam_snapshots.json
 _doctor_backups/
 _archive/
 
-# Debug data
+# Debug data — 账号/会话/密钥/诊断产物
 _email_debug_*.json
 _register_results.json
 _gmail_alias_results.json
@@ -36,6 +36,29 @@ _dpapi_decrypted.json
 _doctor_reference.json
 _179_used_accounts.json
 
+# 账号池数据 — 绝不入库
+keypool.json
+_cloud_pool_keys.json
+_warmup_accounts.json
+accounts.json
+pool_accounts*.json
+*.auth_blob
+oneshot_token.json
+inject_result.json
+quota_snapshots.json
+inuse_marks.json
+instance_claims.json
+
+# 卡密/兑换码
+_ldxp_codes_*.txt
+
+# VSIX 打包产物 (二进制)
+*.vsix
+
+# Deploy scripts (含本地IP/用户名)
+deploy_all.ps1
+deploy_zhou.py
+
 # Temp
 *.bak
 raw_frames.json
@@ -46,5 +69,12 @@ cascade_response.txt
 # Images (screenshots)
 *.png
 
-# Secrets
+# Secrets & Env
 secrets.env
+.env
+.env.local
+*.pem
+*.key
+
+# Node
+node_modules/
