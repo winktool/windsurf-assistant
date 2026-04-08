@@ -1,4 +1,4 @@
-// WAM v10.0.2 — 道法自然: 多源竞速·官方直连·缓存降级·系统DNS·冷启动修复·系统代理自检
+// WAM v10.0.3 — 道法自然: 四层代理发现·多源竞速·官方直连·缓存降级·不依赖任何用户网络环境
 // 载营魄抱一，能无离乎？专气致柔，能如婴儿乎？
 // 五感原则: 切号绝不调用windsurf.logout, 绝不重启extension host, 绝不写state.vscdb
 const vscode = require("vscode");
@@ -1296,9 +1296,39 @@ function _httpsViaProxy(
   });
 }
 
-// ── 从系统代理/环境变量提取额外端口 ──
-function _getSystemProxyPorts() {
-  const extra = new Set();
+// ── v10.0.3: 四层代理发现引擎 — 道法自然·不依赖任何用户环境 ──
+// 层0: VSCode/Windsurf http.proxy 设置 (最可靠 — 用户能用IDE就说明这个代理通)
+// 层1: 环境变量 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY
+// 层2: Windows注册表 Internet Settings ProxyServer
+// 层3: 硬编码常见端口扫描 (兜底)
+function _parseProxyUrl(raw) {
+  if (!raw) return null;
+  try {
+    const s = raw.trim();
+    // socks5://host:port, http://host:port, host:port
+    const m = s.match(
+      /(?:(?:https?|socks[45]?):\/\/)?(?:[^@]+@)?([^:\/\s]+):(\d+)/i,
+    );
+    if (m) {
+      const host = m[1] || "127.0.0.1";
+      const port = parseInt(m[2]);
+      if (port > 0 && port < 65536) return { host, port, raw: s };
+    }
+  } catch {}
+  return null;
+}
+
+function _getVSCodeProxy() {
+  try {
+    const cfg = vscode.workspace.getConfiguration("http");
+    const proxy = cfg.get("proxy");
+    if (proxy) return _parseProxyUrl(proxy);
+  } catch {}
+  return null;
+}
+
+function _getEnvProxyPorts() {
+  const result = [];
   try {
     const envKeys = [
       "HTTP_PROXY",
@@ -1311,33 +1341,59 @@ function _getSystemProxyPorts() {
     for (const k of envKeys) {
       const v = process.env[k];
       if (v) {
-        const m = v.match(/:(\d+)/);
-        if (m) extra.add(parseInt(m[1]));
+        const p = _parseProxyUrl(v);
+        if (p) result.push(p);
       }
     }
   } catch {}
-  if (process.platform === "win32") {
-    try {
-      const { execSync } = require("child_process");
-      const reg = execSync(
-        'reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyServer 2>nul',
-        { timeout: 2000, encoding: "utf8" },
-      );
-      const m = reg.match(/ProxyServer\s+REG_SZ\s+(.+)/i);
-      if (m) {
-        const parts = m[1].trim().split(";");
-        for (const p of parts) {
-          const pm = p.match(/:(\d+)/);
-          if (pm) extra.add(parseInt(pm[1]));
-        }
+  return result;
+}
+
+function _getRegistryProxyPorts() {
+  const result = [];
+  if (process.platform !== "win32") return result;
+  try {
+    const { execSync } = require("child_process");
+    const reg = execSync(
+      'reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyServer 2>nul',
+      { timeout: 2000, encoding: "utf8" },
+    );
+    const m = reg.match(/ProxyServer\s+REG_SZ\s+(.+)/i);
+    if (m) {
+      for (const part of m[1].trim().split(";")) {
+        const p = _parseProxyUrl(part);
+        if (p) result.push(p);
       }
-    } catch {}
-  }
-  return [...extra].filter((p) => p > 0 && p < 65536);
+    }
+  } catch {}
+  return result;
+}
+
+// 汇总所有代理源 — 返回优先级排序的 {host, port, source}[]
+function _collectAllProxySources() {
+  const sources = [];
+  const seen = new Set();
+  const add = (host, port, source) => {
+    const key = `${host}:${port}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    sources.push({ host, port, source });
+  };
+  // 层0: VSCode/Windsurf 代理设置 (最高优先)
+  const vsProxy = _getVSCodeProxy();
+  if (vsProxy) add(vsProxy.host, vsProxy.port, "vscode");
+  // 层1: 环境变量
+  for (const p of _getEnvProxyPorts()) add(p.host, p.port, "env");
+  // 层2: Windows注册表
+  for (const p of _getRegistryProxyPorts()) add(p.host, p.port, "registry");
+  // 层3: 硬编码端口 (全部用 127.0.0.1)
+  for (const port of PROXY_PORTS) add(PROXY_HOST, port, "builtin");
+  return sources;
 }
 
 // ── 探测本地代理端口 ──
 let _proxyPortCache = null;
+let _proxyPortHostCache = PROXY_HOST;
 let _proxyPortCacheTs = 0;
 const PROXY_CACHE_TTL = 300000; // 5分钟 TTL
 function _detectProxy() {
@@ -1347,47 +1403,43 @@ function _detectProxy() {
   )
     return Promise.resolve(_proxyPortCache);
   _proxyPortCache = null;
-  const sysPorts = _getSystemProxyPorts();
-  const allPorts = [...new Set([...PROXY_PORTS, ...sysPorts])];
+  const sources = _collectAllProxySources();
+  if (sources.length === 0) return Promise.resolve(0);
   return new Promise((resolve) => {
     let found = false;
-    let pending = allPorts.length;
-    if (pending === 0) {
-      resolve(0);
-      return;
-    }
-    for (const port of allPorts) {
+    let pending = sources.length;
+    for (const src of sources) {
       const s = new net.Socket();
       s.setTimeout(800);
-      s.connect(port, PROXY_HOST, () => {
+      s.connect(src.port, src.host, () => {
         s.destroy();
         if (!found) {
           found = true;
-          _proxyPortCache = port;
+          _proxyPortCache = src.port;
+          _proxyPortHostCache = src.host;
           _proxyPortCacheTs = Date.now();
-          if (sysPorts.includes(port))
-            log(`proxy: system-detected port ${port}`);
-          resolve(port);
+          if (src.source !== "builtin")
+            log(`proxy: ${src.source} → ${src.host}:${src.port}`);
+          resolve(src.port);
         }
       });
-      s.on("error", () => {
+      const onFail = () => {
         s.destroy();
         if (--pending === 0 && !found) {
           _proxyPortCache = 0;
           _proxyPortCacheTs = Date.now();
           resolve(0);
         }
-      });
-      s.on("timeout", () => {
-        s.destroy();
-        if (--pending === 0 && !found) {
-          _proxyPortCache = 0;
-          _proxyPortCacheTs = Date.now();
-          resolve(0);
-        }
-      });
+      };
+      s.on("error", onFail);
+      s.on("timeout", onFail);
     }
   });
+}
+
+// 返回探测到的代理主机 (支持非localhost代理)
+function _getProxyHost() {
+  return _proxyPortHostCache || PROXY_HOST;
 }
 
 // ── Raw HTTPS POST (返回Buffer, 用于protobuf二进制响应) ──
@@ -1763,7 +1815,7 @@ async function _firebaseVia(channel, email, password, key) {
     case "proxy":
       return _detectProxy().then((port) => {
         if (!port) throw new Error("no_proxy");
-        return _httpsViaProxy(PROXY_HOST, port, url, payload, 10000);
+        return _httpsViaProxy(_getProxyHost(), port, url, payload, 10000);
       });
 
     default:
@@ -1974,7 +2026,7 @@ async function _resolveHostIP(hostname) {
           8000,
         );
         const connReq = http.request({
-          host: PROXY_HOST,
+          host: _getProxyHost(),
           port,
           method: "CONNECT",
           path: "dns.google:443",
@@ -2126,7 +2178,7 @@ async function fetchAccountQuota(email, password) {
         for (const url of OFFICIAL_PLAN_STATUS_URLS) {
           try {
             const resp = await _httpsPostRawViaProxy(
-              PROXY_HOST,
+              _getProxyHost(),
               port,
               url,
               proto,
@@ -2168,7 +2220,13 @@ async function fetchAccountQuota(email, password) {
       fn: async () => {
         const port = await _detectProxy();
         if (!port) throw new Error("no_proxy");
-        return _httpsPostRawViaProxy(PROXY_HOST, port, relayUrl, proto, 10000);
+        return _httpsPostRawViaProxy(
+          _getProxyHost(),
+          port,
+          relayUrl,
+          proto,
+          10000,
+        );
       },
     },
   ];
@@ -2394,7 +2452,7 @@ async function firebaseLookup(idToken) {
       if (port) {
         const url2 = `https://${FIREBASE_HOST}/v1/accounts:lookup?key=${key}`;
         const result = await _httpsViaProxy(
-          PROXY_HOST,
+          _getProxyHost(),
           port,
           url2,
           payload,
@@ -3292,7 +3350,7 @@ function updateStatusBar() {
   if (_mode === "official") {
     _statusBarItem.text = "$(key) 官方模式";
     _statusBarItem.tooltip =
-      "WAM v10.0.2 [官方模式] — 所有切号功能已停止\n点击打开管理面板，可切回WAM模式";
+      "WAM v10.0.3 [官方模式] — 所有切号功能已停止\n点击打开管理面板，可切回WAM模式";
     return;
   }
   const s = _store.getPoolStats();
@@ -3309,7 +3367,7 @@ function updateStatusBar() {
     const monTag = _monitorActive ? "$(sync~spin)" : "$(zap)";
     _statusBarItem.text = `${monTag}${droughtTag} D${liveD}%·W${liveW}% ${s.available}/${s.pwCount}号${inUseTag}${waitTag}`;
     _statusBarItem.tooltip =
-      `WAM v10.0.2 [WAM切号]${s.drought ? " [🏜️Weekly干旱模式·只看D]" : ""}\n` +
+      `WAM v10.0.3 [WAM切号]${s.drought ? " [🏜️Weekly干旱模式·只看D]" : ""}\n` +
       `活跃: ${activeAcc.email}\n${h.plan}\n` +
       `号池: ${s.available}可用 · ${s.exhausted}耗尽 · ${s.waiting}等重置\n` +
       (s.drought
@@ -3320,7 +3378,7 @@ function updateStatusBar() {
       `监测: ${_totalMonitorCycles}轮 · ${_totalChangesDetected}次变动`;
   } else {
     _statusBarItem.text = `$(zap) ${s.pwCount}号`;
-    _statusBarItem.tooltip = `WAM v10.0.2 [WAM切号] · 未选择活跃账号\n日重置: ${s.hrsToDaily.toFixed(1)}h后 · 周重置: ${s.hrsToWeekly.toFixed(1)}h后`;
+    _statusBarItem.tooltip = `WAM v10.0.3 [WAM切号] · 未选择活跃账号\n日重置: ${s.hrsToDaily.toFixed(1)}h后 · 周重置: ${s.hrsToWeekly.toFixed(1)}h后`;
   }
 }
 
@@ -4132,7 +4190,7 @@ function startFileWatcher() {
 // ============================================================
 function activate(context) {
   log(
-    `activate v10.0.2-五感模式 — inst=${_instanceId} 纯热替换·绝不logout·绝不杀agent·Token预热·Rate-limit拦截·系统代理自检`,
+    `activate v10.0.3-五感模式 — inst=${_instanceId} 纯热替换·绝不logout·绝不杀agent·Token预热·Rate-limit拦截·系统代理自检`,
   );
 
   const gsPath =
@@ -4426,7 +4484,7 @@ function activate(context) {
       const inUseEmails = [..._store._inUse.keys()]
         .map((e) => e.substring(0, 15))
         .join(", ");
-      let msg = `WAM v10.0.2 | ${stats.pwCount}号 D${stats.totalD}·W${stats.totalW} | mode=${_mode} | 监测${_totalMonitorCycles}轮·${_totalChangesDetected}次变动·${_store.switchCount}次切号 | inst=${_instanceId}`;
+      let msg = `WAM v10.0.3 | ${stats.pwCount}号 D${stats.totalD}·W${stats.totalW} | mode=${_mode} | 监测${_totalMonitorCycles}轮·${_totalChangesDetected}次变动·${_store.switchCount}次切号 | inst=${_instanceId}`;
       if (activeAcc) msg += ` | 活跃: ${activeAcc.email.substring(0, 20)}`;
       if (_store._inUse.size > 0) msg += ` | 使用中: ${inUseEmails}`;
       vscode.window.showInformationMessage(msg);
