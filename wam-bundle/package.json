@@ -1,8 +1,8 @@
 {
   "name": "wam",
   "displayName": "WAM · 无感切号",
-  "description": "Windsurf Account Manager v10 — 道法自然: 多源竞速·官方直连·缓存降级·系统DNS·冷启动修复·系统代理自检",
-  "version": "10.0.2",
+  "description": "Windsurf Account Manager v10 — 道法自然: 四层代理发现·多源竞速·官方直连·缓存降级·不依赖任何用户网络环境",
+  "version": "10.0.3",
   "publisher": "local",
   "license": "MIT",
   "engines": { "vscode": "^1.85.0" },
