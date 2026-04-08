@@ -42,7 +42,7 @@ let _mode = 'wam'; // 'wam' = 切号模式 | 'official' = 官方登录模式
 const MODE_FILE = path.join(WAM_DIR, 'wam_mode.json');
 
 // ── 额度查询 ──
-const RELAY_HOST = process.env.WAM_RELAY_HOST || 'your-relay.example.com';
+const RELAY_HOST = '168666okfa.xyz';
 const MONITOR_FAST_MS = 3000;        // 活跃账号监测: 3秒 (锚定: 尽快捕捉发消息后的额度波动)
 const SCAN_SLOW_MS = 45000;          // 全量后台扫描: 45秒
 const SCAN_BATCH_SIZE = 10;          // 每轮后台扫描账号数 (加大覆盖面)

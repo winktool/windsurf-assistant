@@ -1,94 +1,27 @@
-# Python
-__pycache__/
-*.pyc
-*.pyo
-
-# Logs
-*.log
-*.stdout.log
-
-# Database
-*.db
-*.db-shm
-*.db-wal
-
-# Backups & Snapshots
-_ext_backups/
-_windsurf_backups/
-_wam_snapshots.json
-_doctor_backups/
-_archive/
-
-# Debug data — 账号/会话/密钥/诊断产物
-_email_debug_*.json
-_register_results.json
-_gmail_alias_results.json
-_gmail_alias_state.json
-_active_account.txt
-_optimal_key.txt
-_live_apikey.txt
-_session_plaintext.json
-_auth_deep_extract.json
-_multi_user_diag_report.json
-_reverse_workbench_results.json
-_continue_reverse.json
-_dpapi_decrypted.json
-_doctor_reference.json
-_179_used_accounts.json
+# 道法自然 — 仅保留核心, 去除一切干扰
 
 # 账号池数据 — 绝不入库
-keypool.json
-_cloud_pool_keys.json
-_warmup_accounts.json
-accounts.json
-pool_accounts*.json
 *.auth_blob
+accounts.json
+keypool.json
 oneshot_token.json
 inject_result.json
 quota_snapshots.json
 inuse_marks.json
 instance_claims.json
 
-# 卡密/兑换码
-_ldxp_codes_*.txt
-
-# VSIX 打包产物 (二进制)
-*.vsix
-
-# Deploy scripts (含本地IP/用户名)
-deploy_all.ps1
-deploy_zhou.py
-
-# Temp
-*.bak
-raw_frames.json
-stream_frames.json
-sonnet46_result.txt
-cascade_response.txt
-
-# Images (screenshots)
-*.png
-
-# Secrets & Env
-secrets.env
+# Secrets
 .env
 .env.local
+secrets.env
 *.pem
 *.key
 
-# Node
+# Build artifacts
+*.vsix
 node_modules/
 
-# Removed directories (development-only, not for users)
-diagnostics/
-research/
-engine/
-dist/
-pool-admin/
-cloud-pool/
-pipeline/
-scripts/
-tools/
-media/
-.vsixmanifest
-LOCAL_MAPPING.md
+# Temp & Logs
+*.log
+*.bak
+__pycache__/
