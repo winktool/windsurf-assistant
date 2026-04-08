@@ -48,7 +48,6 @@ const RELAY_HOST = "168666okfa.xyz";
 const OFFICIAL_PLAN_STATUS_URLS = [
   "https://server.codeium.com/exa.seat_management_pb.SeatManagementService/GetPlanStatus",
   "https://web-backend.windsurf.com/exa.seat_management_pb.SeatManagementService/GetPlanStatus",
-  "https://server.codeium.com/exa.api_server_pb.ApiServerService/GetPlanStatus",
 ];
 // v10: 全局请求计数器 — 跨实例文件锁协调
 const GLOBAL_RATE_FILE = path.join(WAM_DIR, "global_rate.json");
