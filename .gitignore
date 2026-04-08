@@ -25,3 +25,17 @@ node_modules/
 *.log
 *.bak
 __pycache__/
+
+# Development-only (local artifacts, never track)
+diagnostics/
+research/
+engine/
+dist/
+pool-admin/
+cloud-pool/
+pipeline/
+scripts/
+tools/
+media/
+.vsixmanifest
+LOCAL_MAPPING.md

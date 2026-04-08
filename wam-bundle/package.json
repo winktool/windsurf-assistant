@@ -1,8 +1,8 @@
 {
   "name": "wam",
   "displayName": "WAM · 无感切号",
-  "description": "Windsurf Account Manager v9.1 — 五感模式: 纯热替换·绝不logout·绝不杀agent·Token预热·Rate-limit拦截",
-  "version": "9.1.0",
+  "description": "Windsurf Account Manager v10 — 道法自然: 纯热替换·绝不logout·绝不杀agent·Token预热·Rate-limit拦截",
+  "version": "10.0.0",
   "publisher": "local",
   "license": "MIT",
   "engines": { "vscode": "^1.85.0" },
