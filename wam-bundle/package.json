@@ -1,56 +1,103 @@
 {
-  "name": "wam",
-  "displayName": "WAM · 无感切号",
-  "description": "Windsurf Account Manager v10 — 道法自然: 四层代理发现·多源竞速·官方直连·缓存降级·不依赖任何用户网络环境",
-  "version": "10.0.3",
-  "publisher": "local",
-  "license": "MIT",
-  "engines": { "vscode": "^1.85.0" },
-  "categories": ["Other"],
-  "activationEvents": ["onStartupFinished"],
-  "main": "./extension.js",
-  "contributes": {
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "wam-container",
-          "title": "WAM · 无感切号",
-          "icon": "media/icon.svg"
-        }
-      ]
-    },
-    "views": {
-      "wam-container": [
-        {
-          "id": "wam.panel",
-          "name": "无感切号 · 账号管理",
-          "type": "webview"
-        }
-      ]
-    },
-    "commands": [
-      { "command": "wam.openEditor", "title": "WAM: 管理面板" },
-      { "command": "wam.switchAccount", "title": "WAM: 切换账号" },
-      { "command": "wam.refreshAll", "title": "WAM: 刷新全部" },
-      { "command": "wam.addAccount", "title": "WAM: 添加账号" },
-      { "command": "wam.autoRotate", "title": "WAM: 智能轮转" },
-      { "command": "wam.panicSwitch", "title": "WAM: 紧急切换" },
-      { "command": "wam.injectToken", "title": "WAM: 注入Token" },
-      { "command": "wam.verifyAll", "title": "WAM: 验证清理 (剔除过期/无效账号)" },
-      { "command": "wam.scanExpiry", "title": "WAM: 刷新有效期 (批量获取缺失的planEnd)" },
-      { "command": "wam.officialMode", "title": "WAM: 官方模式 (暂停切号)" },
-      { "command": "wam.wamMode", "title": "WAM: WAM切号模式" },
-      { "command": "wam.status", "title": "WAM: 状态" }
-    ],
-    "configuration": {
-      "title": "WAM 无感切号",
-      "properties": {
-        "wam.autoRotate": {
-          "type": "boolean",
-          "default": true,
-          "description": "检测额度变动时自动切换到未使用的最优账号"
-        }
-      }
-    }
-  }
+	"name": "wam",
+	"displayName": "WAM · 无感切号",
+	"description": "Windsurf Account Manager v10 — 道法自然: 纯热替换·绝不logout·绝不杀agent·Token预热·Rate-limit拦截",
+	"version": "10.0.4",
+	"publisher": "local",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.85.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"main": "./extension.js",
+	"contributes": {
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "wam-container",
+					"title": "WAM · 无感切号",
+					"icon": "media/icon.svg"
+				}
+			]
+		},
+		"views": {
+			"wam-container": [
+				{
+					"id": "wam.panel",
+					"name": "无感切号 · 账号管理",
+					"type": "webview"
+				}
+			]
+		},
+		"commands": [
+			{
+				"command": "wam.openEditor",
+				"title": "WAM: 管理面板"
+			},
+			{
+				"command": "wam.switchAccount",
+				"title": "WAM: 切换账号"
+			},
+			{
+				"command": "wam.refreshAll",
+				"title": "WAM: 刷新全部"
+			},
+			{
+				"command": "wam.addAccount",
+				"title": "WAM: 添加账号"
+			},
+			{
+				"command": "wam.autoRotate",
+				"title": "WAM: 智能轮转"
+			},
+			{
+				"command": "wam.panicSwitch",
+				"title": "WAM: 紧急切换"
+			},
+			{
+				"command": "wam.injectToken",
+				"title": "WAM: 注入Token"
+			},
+			{
+				"command": "wam.verifyAll",
+				"title": "WAM: 验证清理 (剔除过期/无效账号)"
+			},
+			{
+				"command": "wam.scanExpiry",
+				"title": "WAM: 刷新有效期 (批量获取缺失的planEnd)"
+			},
+			{
+				"command": "wam.officialMode",
+				"title": "WAM: 官方模式 (暂停切号)"
+			},
+			{
+				"command": "wam.wamMode",
+				"title": "WAM: WAM切号模式"
+			},
+			{
+				"command": "wam.status",
+				"title": "WAM: 状态"
+			}
+		],
+		"configuration": {
+			"title": "WAM 无感切号",
+			"properties": {
+				"wam.autoRotate": {
+					"type": "boolean",
+					"default": true,
+					"description": "检测额度变动时自动切换到未使用的最优账号"
+				}
+			}
+		}
+	},
+	"__metadata": {
+		"installedTimestamp": 1775726073466,
+		"targetPlatform": "undefined",
+		"size": 179101
+	}
 }

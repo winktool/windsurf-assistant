@@ -36,6 +36,9 @@ cloud-pool/
 pipeline/
 scripts/
 tools/
-media/
+/media/
 .vsixmanifest
 LOCAL_MAPPING.md
+
+# Allow wam-bundle media (icon needed)
+!wam-bundle/media/

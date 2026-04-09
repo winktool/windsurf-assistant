@@ -1,4 +1,4 @@
-// WAM v10.0.3 — 道法自然: 四层代理发现·多源竞速·官方直连·缓存降级·不依赖任何用户网络环境
+﻿// WAM v10.1.0 — 道法自然: 单key精简·登录限流·quota冷却·指数退避·代理快恢·CONNECT验证·agent隔离·四层代理·多源竞速·官方直连·缓存降级
 // 载营魄抱一，能无离乎？专气致柔，能如婴儿乎？
 // 五感原则: 切号绝不调用windsurf.logout, 绝不重启extension host, 绝不写state.vscdb
 const vscode = require("vscode");
@@ -15,7 +15,7 @@ const dns = require("dns");
 // ── 配置 ──
 const FIREBASE_KEYS = [
   "AIzaSyDsOl-1XpT5err0Tcnx8FFod1H8gVGIycY",
-  "AIzaSyDKm6GGxMJfCbNf-k0kPytiGLaqFJpeSac",
+  "AIzaSyDKm6GGxMJfCbNf-k0kPytiGLaqFJpeSac", // v10.0.4: restored — single key = single point of failure
 ];
 const FIREBASE_HOST = "identitytoolkit.googleapis.com";
 const PROXY_HOST = "127.0.0.1";
@@ -92,6 +92,15 @@ let _predictiveCandidate = -1; // 预判候选账号索引 (-1=无)
 let _prewarmedToken = null; // v8: 预热Token缓存 {email, idToken, ts} — 道法自然: 切号前已备好弹药
 let _rateLimitWatcher = null; // v8: Rate-limit错误拦截器
 let _droughtCache = { value: false, ts: 0 }; // Weekly干旱缓存 (10秒TTL)
+let _monitorConsecutiveFails = 0; // monitor连续失败计数 (指数退避)
+let _lastSwitchAttemptTime = 0; // v10.0.6: 上次切号尝试时间(含失败), 防止失败后立即重试
+// v10.1.0: Firebase登录限流 — 根治quota exhaustion
+const _firebaseKeyQuotaCooldown = new Map(); // keySuffix → {until, streak} — quota exceeded后冷却, 指数退避
+const FIREBASE_QUOTA_COOLDOWN_BASE = 15000; // 基础冷却15秒 (v10.0.4: 降低避免deadlock)
+const FIREBASE_QUOTA_COOLDOWN_MAX = 60000; // 最大冷却60秒 (v10.0.4: 降低避免deadlock)
+const _firebaseLoginTimestamps = []; // 全局登录请求时间戳数组 (滑动窗口)
+const FIREBASE_LOGIN_RPM = 15; // 每分钟最多15次Firebase登录 (Google限制~100/min, 留安全余量)
+const FIREBASE_LOGIN_WINDOW = 60000; // 滑动窗口60秒
 
 function log(msg) {
   const line = `[${new Date().toISOString()}] ${msg}\n`;
@@ -1193,6 +1202,7 @@ function _httpsPost(url, body, opts = {}) {
         opts.rejectUnauthorized !== undefined ? opts.rejectUnauthorized : true,
       servername:
         opts.servername !== undefined ? opts.servername : parsed.hostname,
+      agent: false, // v10.0.4: 绕过全局proxy agent
     };
     const req = https.request(reqOpts, (res) => {
       let data = "";
@@ -1234,6 +1244,7 @@ function _httpsViaProxy(
       method: "CONNECT",
       path: `${parsed.hostname}:443`,
       timeout: 5000,
+      agent: false, // v10.0.4: 绕过全局proxy agent
     });
     connReq.on("connect", (res, socket) => {
       if (res.statusCode !== 200) {
@@ -1257,6 +1268,7 @@ function _httpsViaProxy(
           servername: parsed.hostname,
           rejectUnauthorized: false,
           timeout: timeout - 2000,
+          agent: false, // v10.0.4: 绕过全局proxy agent
         },
         (resp) => {
           let data = "";
@@ -1391,7 +1403,7 @@ function _collectAllProxySources() {
   return sources;
 }
 
-// ── 探测本地代理端口 ──
+// ── 探测本地代理端口 (v10.0.4: CONNECT握手验证 — 不再仅TCP连接, 排除SOCKS-only端口) ──
 let _proxyPortCache = null;
 let _proxyPortHostCache = PROXY_HOST;
 let _proxyPortCacheTs = 0;
@@ -1409,30 +1421,42 @@ function _detectProxy() {
     let found = false;
     let pending = sources.length;
     for (const src of sources) {
-      const s = new net.Socket();
-      s.setTimeout(800);
-      s.connect(src.port, src.host, () => {
-        s.destroy();
-        if (!found) {
+      // v10.0.4: 用HTTP CONNECT握手验证代理, 而非仅TCP连接
+      // 这样SOCKS-only端口(如20808)会被socket hang up淘汰
+      const connReq = http.request({
+        host: src.host,
+        port: src.port,
+        method: "CONNECT",
+        path: `${FIREBASE_HOST}:443`,
+        timeout: 3000,
+        agent: false, // 绕过VS Code全局代理agent
+      });
+      connReq.on("connect", (res, socket) => {
+        socket.destroy();
+        connReq.destroy();
+        if (!found && res.statusCode === 200) {
           found = true;
           _proxyPortCache = src.port;
           _proxyPortHostCache = src.host;
           _proxyPortCacheTs = Date.now();
-          if (src.source !== "builtin")
-            log(`proxy: ${src.source} → ${src.host}:${src.port}`);
+          log(
+            `proxy: ${src.source} → ${src.host}:${src.port} (CONNECT verified)`,
+          );
           resolve(src.port);
         }
       });
       const onFail = () => {
-        s.destroy();
+        connReq.destroy();
         if (--pending === 0 && !found) {
           _proxyPortCache = 0;
-          _proxyPortCacheTs = Date.now();
+          _proxyPortCacheTs = Date.now() - PROXY_CACHE_TTL + 30000; // v10.0.5: 无代理时只缓存30秒(非5分钟), 快速恢复
+          log("proxy: no CONNECT-capable port found (30s cache)");
           resolve(0);
         }
       };
-      s.on("error", onFail);
-      s.on("timeout", onFail);
+      connReq.on("error", onFail);
+      connReq.on("timeout", onFail);
+      connReq.end();
     }
   });
 }
@@ -1461,6 +1485,7 @@ function _httpsPostRaw(url, body, opts = {}) {
       timeout: opts.timeout || 12000,
       rejectUnauthorized: false,
       servername: parsed.hostname,
+      agent: false, // v10.0.4: 绕过全局proxy agent
     };
     const req = https.request(reqOpts, (res) => {
       const chunks = [];
@@ -1497,6 +1522,7 @@ function _httpsPostRawViaProxy(
       method: "CONNECT",
       path: `${parsed.hostname}:443`,
       timeout: 5000,
+      agent: false, // v10.0.4
     });
     connReq.on("connect", (res, socket) => {
       if (res.statusCode !== 200) {
@@ -1520,6 +1546,7 @@ function _httpsPostRawViaProxy(
           servername: parsed.hostname,
           rejectUnauthorized: false,
           timeout: timeout - 2000,
+          agent: false, // v10.0.4
         },
         (resp) => {
           const chunks = [];
@@ -1823,30 +1850,98 @@ async function _firebaseVia(channel, email, password, key) {
   }
 }
 
-// ── 多通道并行竞速 Firebase 登录 (v7.3: 快速失败 — 串行重试→并行重试, 60s→20s) ──
-async function firebaseLogin(email, password) {
+// ── v10.1.0: Firebase登录限流检查 ──
+function _firebaseLoginRateOK() {
+  const now = Date.now();
+  // 清理过期时间戳
+  while (
+    _firebaseLoginTimestamps.length > 0 &&
+    now - _firebaseLoginTimestamps[0] > FIREBASE_LOGIN_WINDOW
+  ) {
+    _firebaseLoginTimestamps.shift();
+  }
+  if (_firebaseLoginTimestamps.length >= FIREBASE_LOGIN_RPM) {
+    return false; // 达到限额
+  }
+  _firebaseLoginTimestamps.push(now);
+  return true;
+}
+
+// ── 多通道并行竞速 Firebase 登录 (v10.1.0: 单key精简·限流·quota冷却) ──
+async function firebaseLogin(email, password, { force = false } = {}) {
   const channels = ["proxy", "direct"];
   const errors = {};
 
+  // v10.1.0: 全局登录限流 — 防止quota exhaustion
+  if (!force && !_firebaseLoginRateOK()) {
+    log(
+      `firebaseLogin: rate limited (${_firebaseLoginTimestamps.length}/${FIREBASE_LOGIN_RPM} in 60s)`,
+    );
+    return { ok: false, error: "login_rate_limited" };
+  }
+
   for (const key of FIREBASE_KEYS) {
     const keySuffix = key.slice(-4);
+
+    // v10.1.0: per-key quota冷却 — quota exceeded后跳过此key 90秒
+    const cooldown = _firebaseKeyQuotaCooldown.get(keySuffix);
+    if (!force && cooldown && Date.now() < cooldown.until) {
+      const remain = Math.round((cooldown.until - Date.now()) / 1000);
+      errors[`${keySuffix}`] = `quota_cooldown(${remain}s)`;
+      log(
+        `firebaseLogin: key ${keySuffix} in quota cooldown (${remain}s left)`,
+      );
+      continue;
+    }
+
     const racePromises = channels.map((ch) =>
       _firebaseVia(ch, email, password, key)
         .then((result) => {
-          if (result && result.idToken)
+          if (result && result.idToken) {
+            _firebaseKeyQuotaCooldown.delete(keySuffix); // v10.1.1: 成功→清除cooldown streak
             return {
               ok: true,
               idToken: result.idToken,
               channel: `${ch}-${keySuffix}`,
             };
+          }
           const err = result?.error;
           const msg = (typeof err === "object" ? err?.message : err) || "";
+          // v10.1.1: 检测quota exceeded / App Check → 指数退避冷却
+          if (/Quota exceeded|RESOURCE_EXHAUSTED/i.test(msg)) {
+            const prev = _firebaseKeyQuotaCooldown.get(keySuffix);
+            const streak = (prev?.streak || 0) + 1;
+            const coolMs = Math.min(
+              FIREBASE_QUOTA_COOLDOWN_MAX,
+              FIREBASE_QUOTA_COOLDOWN_BASE * Math.pow(2, streak - 1),
+            );
+            _firebaseKeyQuotaCooldown.set(keySuffix, {
+              until: Date.now() + coolMs,
+              streak,
+            });
+            log(
+              `firebaseLogin: key ${keySuffix} quota/appcheck → cooldown ${coolMs / 1000}s (streak=${streak})`,
+            );
+          }
           if (/INVALID|NOT_FOUND|DISABLED|WRONG/.test(msg)) {
             return { ok: false, permanent: true, error: msg };
           }
           throw new Error(msg || "no_token");
         })
         .catch((e) => {
+          // v10.1.1: catch中也检测quota exceeded / App Check — 指数退避
+          if (/Quota exceeded|RESOURCE_EXHAUSTED/i.test(e.message)) {
+            const prev = _firebaseKeyQuotaCooldown.get(keySuffix);
+            const streak = (prev?.streak || 0) + 1;
+            const coolMs = Math.min(
+              FIREBASE_QUOTA_COOLDOWN_MAX,
+              FIREBASE_QUOTA_COOLDOWN_BASE * Math.pow(2, streak - 1),
+            );
+            _firebaseKeyQuotaCooldown.set(keySuffix, {
+              until: Date.now() + coolMs,
+              streak,
+            });
+          }
           errors[`${ch}-${keySuffix}`] = e.message;
           throw e;
         }),
@@ -1866,9 +1961,25 @@ async function firebaseLogin(email, password) {
     }
   }
 
-  // v7.3: 快速重试 — 重置代理缓存后并行竞速一次(替代旧版的串行循环, 从40s→8s)
+  // v10.1.0: 重试前检查是否所有key都在冷却中 — 如果是, 快速失败
+  const allKeysCooling = FIREBASE_KEYS.every((k) => {
+    const s = k.slice(-4);
+    const cd = _firebaseKeyQuotaCooldown.get(s);
+    return cd && Date.now() < cd.until;
+  });
+  if (!force && allKeysCooling) {
+    log("firebaseLogin: all keys in quota cooldown — fast fail");
+    _proxyPortCache = null;
+    return { ok: false, error: "all_keys_quota_cooldown" };
+  }
+
+  // 快速重试 — 重置代理缓存后并行竞速一次
   _proxyPortCache = null;
-  const retryKey = FIREBASE_KEYS[0];
+  const retryKey =
+    FIREBASE_KEYS.find((k) => {
+      const cd = _firebaseKeyQuotaCooldown.get(k.slice(-4));
+      return !cd || Date.now() >= cd.until;
+    }) || FIREBASE_KEYS[0];
   const retryKeySuffix = retryKey.slice(-4);
   const retryPromises = channels.map((ch) =>
     _firebaseVia(ch, email, password, retryKey)
@@ -1882,6 +1993,18 @@ async function firebaseLogin(email, password) {
         throw new Error("no_token");
       })
       .catch((e) => {
+        if (/Quota exceeded|RESOURCE_EXHAUSTED/i.test(e.message)) {
+          const prev = _firebaseKeyQuotaCooldown.get(retryKeySuffix);
+          const streak = (prev?.streak || 0) + 1;
+          const coolMs = Math.min(
+            FIREBASE_QUOTA_COOLDOWN_MAX,
+            FIREBASE_QUOTA_COOLDOWN_BASE * Math.pow(2, streak - 1),
+          );
+          _firebaseKeyQuotaCooldown.set(retryKeySuffix, {
+            until: Date.now() + coolMs,
+            streak,
+          });
+        }
         errors[`retry-${ch}`] = e.message;
         throw e;
       }),
@@ -1891,17 +2014,44 @@ async function firebaseLogin(email, password) {
     if (result.ok) return result;
   } catch {}
 
+  // v10.1.0: 详细错误日志 + 代理诊断
+  const errSummary = Object.entries(errors)
+    .map(([k, v]) => `${k}:${v.substring(0, 80)}`)
+    .join(" | ");
+  log(
+    `firebaseLogin FAIL: proxyCache=${_proxyPortCache} proxyHost=${_proxyPortHostCache} cacheAge=${_proxyPortCacheTs ? Math.round((Date.now() - _proxyPortCacheTs) / 1000) + "s" : "none"} errors=[${errSummary}]`,
+  );
+  // 登录全败时清除代理缓存, 让下次重新探测
+  _proxyPortCache = null;
   return { ok: false, error: "all_channels_failed", details: errors };
 }
 
 // ── 获取缓存的idToken或重新登录 ──
+const TOKEN_GRACE_MS = 10 * 60000; // v10.1.0: 过期token宽限10分钟 (Firebase token实际有效60min, 我们缓存50min)
 async function getCachedToken(email, password) {
   const key = email.toLowerCase();
   const cached = _tokenCache.get(key);
   if (cached && cached.expiresAt > Date.now())
     return { ok: true, idToken: cached.idToken };
   const loginResult = await firebaseLogin(email, password);
-  if (!loginResult.ok) return loginResult;
+  if (!loginResult.ok) {
+    // v10.1.0: 瞬态失败(限流/冷却)时, 过期token如果在宽限期内仍可使用
+    const isTransient =
+      /rate_limited|quota_cooldown|all_keys_quota|Firebase App Check token is invalid|all_channels_failed/.test(
+        loginResult.error || "",
+      );
+    if (
+      isTransient &&
+      cached &&
+      cached.expiresAt + TOKEN_GRACE_MS > Date.now()
+    ) {
+      log(
+        `getCachedToken: login transient fail (${loginResult.error}), using grace-period token (${Math.round((Date.now() - cached.expiresAt) / 1000)}s past TTL)`,
+      );
+      return { ok: true, idToken: cached.idToken, _grace: true };
+    }
+    return loginResult;
+  }
   _tokenCache.set(key, {
     idToken: loginResult.idToken,
     expiresAt: Date.now() + TOKEN_CACHE_TTL,
@@ -2363,10 +2513,11 @@ function _updateAccountUsage(email, quota) {
 // 五感原则: 失败则优雅降级, 绝不破坏现有会话 — 保持当前号继续运行远比强行切号重要
 async function injectAuth(idToken) {
   const cmd = "windsurf.provideAuthTokenToAuthProvider";
-  const TIMEOUTS = [15000, 15000, 20000, 25000]; // 4次尝试, 逐步放宽超时
-  const BACKOFFS = [0, 500, 1500, 3000]; // 退避递增: 0→0.5→1.5→3s
+  const TIMEOUTS = [15000, 18000, 22000]; // v10.0.6: 3次尝试(4th极少成功), 逐步放宽超时
+  const BACKOFFS = [0, 1000, 2500]; // v10.0.6: 退避加大: 0→1→2.5s, 给Windsurf更多settle时间
 
-  for (let attempt = 1; attempt <= 4; attempt++) {
+  let consecutiveCodeZero = 0; // v10.0.5: 连续code:0计数 — 智能快速退出
+  for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       if (BACKOFFS[attempt - 1] > 0) {
         log(
@@ -2374,7 +2525,7 @@ async function injectAuth(idToken) {
         );
         await new Promise((r) => setTimeout(r, BACKOFFS[attempt - 1]));
       }
-      log(`inject: hot-swap attempt ${attempt}/4 (no-logout·五感模式)`);
+      log(`inject: hot-swap attempt ${attempt}/3 (no-logout·五感模式)`);
       const timeout = TIMEOUTS[attempt - 1];
       const result = await Promise.race([
         vscode.commands.executeCommand(cmd, idToken),
@@ -2392,9 +2543,16 @@ async function injectAuth(idToken) {
         return extracted;
       }
       if (result && result.error) {
-        log(
-          `inject: attempt ${attempt} error: ${JSON.stringify(result.error)}`,
-        );
+        const errStr = JSON.stringify(result.error);
+        log(`inject: attempt ${attempt} error: ${errStr}`);
+        // v10.0.6: code:0连续2次 → Windsurf内部拒绝, 快速退出(从3次降为2次)
+        if (result.error?.code === 0) consecutiveCodeZero++;
+        if (consecutiveCodeZero >= 2 && attempt < 3) {
+          log(
+            `inject: code:0 ×${consecutiveCodeZero} — skipping remaining attempts`,
+          );
+          break;
+        }
       } else {
         log(
           `inject: attempt ${attempt} unexpected: ${JSON.stringify(result || null).substring(0, 200)}`,
@@ -2404,13 +2562,13 @@ async function injectAuth(idToken) {
       log(`inject: attempt ${attempt} threw: ${e.message}`);
     }
   }
-  // 五感模式: 4次全败也绝不logout — 保持现有会话不受干扰, agent继续运行
+  // 五感模式: 全败也绝不logout — 保持现有会话不受干扰, agent继续运行
   log(
-    "inject: all 4 hot-swap attempts failed — 五感模式: 保持现有会话, 不logout, 不中断agent",
+    "inject: all hot-swap attempts failed — 五感模式: 保持现有会话, 不logout, 不中断agent",
   );
   return {
     ok: false,
-    error: "all 4 inject attempts failed (五感模式: 已保留现有会话)",
+    error: "inject failed (五感模式: 已保留现有会话)",
   };
 }
 
@@ -2711,6 +2869,7 @@ function _archivePurged(store, archived) {
 async function switchToAccount(email, password) {
   log(`switch: ${email}`);
   const t0 = Date.now();
+  _lastSwitchAttemptTime = t0; // v10.0.6: 记录尝试时间(含失败), 防止3s循环重试
 
   // ── 快速路径: 检查预热Token缓存 (道法自然: 弹药已备好, 一触即发) ──
   let idToken = null;
@@ -2736,12 +2895,13 @@ async function switchToAccount(email, password) {
     }
   }
 
-  // ── 兜底路径: Firebase登录 ──
+  // ── 兜底路径: Firebase登录 (force=true: 用户切号不受cooldown限制) ──
   if (!idToken) {
-    const loginResult = await firebaseLogin(email, password);
+    const loginResult = await firebaseLogin(email, password, { force: true });
     if (!loginResult.ok) {
       const err = loginResult.error || "";
       log(`switch FAIL login: ${err} [${Date.now() - t0}ms]`);
+      _tokenCache.delete(emailKey); // v10.0.5: 登录失败也清token缓存
       if (/INVALID|NOT_FOUND|DISABLED|WRONG/.test(err)) {
         const idx = _store?.accounts.findIndex(
           (a) => a.email.toLowerCase() === emailKey,
@@ -2936,10 +3096,43 @@ async function monitorActiveQuota() {
 
     const result = await fetchAccountQuota(acc.email, acc.password);
     if (!result.ok) {
-      log(`monitor: ${acc.email.substring(0, 20)} fetch fail: ${result.error}`);
+      _monitorConsecutiveFails++;
+      // v10.0.5: 指数退避 — 连续失败时延长下次监测间隔, 根治rate_limited风暴
+      // 1次失败→多等3s, 2次→9s, 3次→27s, 上限60s
+      const backoffMs = Math.min(
+        60000,
+        MONITOR_FAST_MS * Math.pow(3, _monitorConsecutiveFails),
+      );
+      if (
+        _monitorConsecutiveFails <= 3 ||
+        _monitorConsecutiveFails % 10 === 0
+      ) {
+        log(
+          `monitor: ${acc.email.substring(0, 20)} fetch fail: ${result.error} (×${_monitorConsecutiveFails}, backoff ${Math.round(backoffMs / 1000)}s)`,
+        );
+      }
       _monitorActive = false;
+      // 额外等待退避时间后再进入下一轮
+      if (_monitorTimer && backoffMs > MONITOR_FAST_MS) {
+        clearTimeout(_monitorTimer);
+        _monitorTimer = setTimeout(async () => {
+          await monitorActiveQuota();
+          if (_monitorTimer) {
+            const monitorInterval = () =>
+              Date.now() < _burstUntil ? BURST_MS : MONITOR_FAST_MS;
+            const schedNext = () => {
+              _monitorTimer = setTimeout(async () => {
+                await monitorActiveQuota();
+                if (_monitorTimer) schedNext();
+              }, monitorInterval());
+            };
+            schedNext();
+          }
+        }, backoffMs);
+      }
       return;
     }
+    _monitorConsecutiveFails = 0; // 成功时重置
 
     const emailKey = acc.email.toLowerCase();
     const prev = _quotaSnapshots.get(emailKey);
@@ -2981,8 +3174,10 @@ async function monitorActiveQuota() {
         });
 
         // ── 消息锚定核心: 波动=有人发消息→立即切到新账号, 确保下条消息用新号 ──
-        // v7.3: 自动切号冷却 — 上次切号15s内不再触发, 避免连续切号风暴
-        const switchCooldown = Date.now() - _lastSwitchTime < 15000;
+        // v10.0.6: 冷却同时检查成功时间和尝试时间, 防止失败后3s循环重试
+        const switchCooldown =
+          Date.now() - Math.max(_lastSwitchTime, _lastSwitchAttemptTime) <
+          15000;
         if (autoRotate && !_switching && !switchCooldown) {
           let bestI = _predictiveCandidate >= 0 ? _predictiveCandidate : -1;
           if (bestI >= 0) {
@@ -3073,7 +3268,8 @@ async function monitorActiveQuota() {
         ? result.daily < AUTO_SWITCH_THRESHOLD
         : Math.min(result.daily, result.weekly) < AUTO_SWITCH_THRESHOLD;
 
-      const exhaustCooldown = Date.now() - _lastSwitchTime < 15000;
+      const exhaustCooldown =
+        Date.now() - Math.max(_lastSwitchTime, _lastSwitchAttemptTime) < 15000;
       if (isExhausted && autoRotate && !_switching && !exhaustCooldown) {
         const hrsToReset = hoursUntilDailyReset();
 
@@ -4190,7 +4386,7 @@ function startFileWatcher() {
 // ============================================================
 function activate(context) {
   log(
-    `activate v10.0.3-五感模式 — inst=${_instanceId} 纯热替换·绝不logout·绝不杀agent·Token预热·Rate-limit拦截·系统代理自检`,
+    `activate v10.1.1-五感模式 — inst=${_instanceId} 单key·登录限流·quota冷却·失败冷却·3次注入·指数退避·代理快恢·CONNECT验证·agent隔离·纯热替换·绝不logout·绝不杀agent·Token预热`,
   );
 
   const gsPath =
