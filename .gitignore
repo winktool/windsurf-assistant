@@ -1,6 +1,19 @@
-# 道法自然 — 仅保留核心, 去除一切干扰
+# 道法自然 — 专注切号助手本源, 隔离一切非核心资源于本地
 
-# 账号池数据 — 绝不入库
+# ═══ 核心资源隔离 (仅保留本地, 不入库) ═══
+cloud-pool/
+diagnostics/
+engine/
+media/
+monitor/
+pipeline/
+pool-admin/
+research/
+scripts/
+tools/
+dist/
+
+# ═══ 账号池数据 — 绝不入库 ═══
 *.auth_blob
 accounts.json
 keypool.json
@@ -10,32 +23,25 @@ quota_snapshots.json
 inuse_marks.json
 instance_claims.json
 
-# Secrets
+# ═══ 机密 ═══
 .env
 .env.local
 secrets.env
 *.pem
 *.key
 
-# Build artifacts
+# ═══ 构建产物 ═══
 *.vsix
 node_modules/
 
-# Temp & Logs
+# ═══ 临时与日志 ═══
 *.log
 *.bak
 __pycache__/
 
-# Development-only (local-only artifacts)
+# ═══ 本地映射 ═══
 LOCAL_MAPPING.md
 .vsixmanifest
 
-# dist/ is the original Windsurf extension (4MB+), not our code
-dist/
-
-# Allow wam-bundle media (icon needed)
+# ═══ 允许 wam-bundle 内图标 ═══
 !wam-bundle/media/
-
-# Monitor runtime artifacts
-monitor/logs/
-monitor/*.db
