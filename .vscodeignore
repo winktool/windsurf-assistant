@@ -1,0 +1,7 @@
+# 道法自然 — VSIX只含切号引擎本源
+**
+!package.json
+!README.md
+!CHANGELOG.md
+!LICENSE
+!wam-bundle/**
