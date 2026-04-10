@@ -1,8 +1,8 @@
 {
   "name": "windsurf-login-helper",
   "displayName": "WAM · Windsurf Account Manager",
-  "description": "WAM v14.2 — 道法自然: 官方API直连·系统代理自适应·版本自适应注入·多源额度竞速·根治hung注入·零环境依赖·纯热替换·绝不logout·绝不杀agent",
-  "version": "14.2.0",
+  "description": "WAM v14.3 — 为道日损: p3无条件重试·4阶段递进注入·系统代理自适应·多源额度竞速·零环境依赖·纯热替换·绝不logout",
+  "version": "14.3.0",
   "license": "MIT",
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Other"],

@@ -1,8 +1,8 @@
 # WAM · Windsurf Account Manager
 
-> 道法自然。上善若水，水善利万物而不争。
+> 为道日损。损之又损，以至于无为。无为而无不为。
 
-**WAM v14.2** — 官方API直连 · 系统代理自适应 · 版本自适应注入 · 多源额度竞速 · 零环境依赖 · 纯热替换 · 绝不logout
+**WAM v14.3** — 零环境依赖 · 系统代理自适应 · 版本自适应注入 · 4阶段递进注入 · 多源额度竞速 · Token活水池 · 纯热替换
 
 ---
 
@@ -10,31 +10,35 @@
 
 安装后，Windsurf 编码时额度耗尽会 **自动无感切换到下一个可用账号**，编码体验零中断。
 
+### 零环境依赖 — 从根本上不受任何环境制约
+
+| 维度 | 机制 | 说明 |
+|------|------|------|
+| **网络环境** | `_getSystemProxy()` + `_detectProxy()` | 自动读取系统代理(env/VS Code) → 并行TCP+CONNECT验证 → 无代理时直连 |
+| **电脑环境** | 仅依赖 Node.js 标准库 | `vscode`/`crypto`/`https`/`http`/`net`/`fs`/`path`/`os` — 无第三方依赖 |
+| **Windsurf版本** | `INJECT_COMMANDS` 3命令候选 | `provideAuthTokenToAuthProvider` / `codeium.provideAuthToken` / `windsurf.provideAuthToken` 自动探测 |
+| **代理软件** | 系统代理优先 + 常见端口扫描 | Clash/V2Ray/Trojan/SSR 任意一种均可，无代理也能直连 |
+| **DNS环境** | DoH双路径 | Google DNS + Cloudflare DNS，绕过 Clash fake-ip |
+
 ### 核心能力
 
-- **零环境依赖** — 不依赖特定代理软件、端口、网络环境或Windsurf版本，开箱即用
-- **系统代理自适应** — 自动读取 `HTTPS_PROXY`/`HTTP_PROXY`/VS Code配置，并行探测验证，无需手动配置
-- **版本自适应注入** — 自动适配不同Windsurf版本的注入命令（`provideAuthTokenToAuthProvider`/`provideAuthToken`等）
-- **官方API直连** — 额度查询直连 `server.codeium.com` + `web-backend.windsurf.com`，不依赖中继服务器
-- **纯热替换** — 绝不logout、绝不杀agent、不重启、不丢上下文（五感模式）
-- **Token预热** — 预判下一个最优账号并提前获取Token，切换瞬间完成（<3s）
-- **智能轮转** — 日额度/周额度实时监控，消息锚定切号（波动即切）+ 耗尽保护（<5%自动切）
-- **多源竞速** — 4通道并行（官方proxy/官方direct/中继direct/中继proxy），第一个成功即返回
-- **根治hung注入** — Phase1-4递进式注入：快探3s→收割4s→无条件重试5s→备选命令5s
+- **4阶段递进注入** — P1快探3s → P2收割4s → P3无条件重试(新命令)4s → P4备选命令5s，总超时≤12s
+- **Token活水池** — 后台持续预热所有账号Token，任意切号必然cache HIT，切换<3s
+- **消息锚定切号** — 实时监测额度波动，波动=有人发消息→立即切到新号，确保下条消息用新号
+- **多源额度竞速** — 4通道并行(官方proxy/官方direct/中继IP/中继proxy)，`Promise.any`第一个成功即返回
+- **3官方端点** — `server.codeium.com` + `web-backend.windsurf.com` + `register.windsurf.com`
+- **五感模式** — 绝不logout、绝不杀agent、不重启、不丢上下文
 - **Weekly干旱模式** — 全池W耗尽时自动切入只看Daily模式，避免无效轮转死循环
-- **多账号管理** — 暗色主题管理面板，批量验证/清理/刷新有效期/自诊断
-- **WAM/官方双模式** — 一键切换，随时回退官方登录
+- **Rate-limit拦截** — 主动感知编辑器中的rate limit错误，自动触发无感切号
+- **热部署** — `restartExtensionHost` 仅重启扩展进程，不中断对话
+- **自诊断** — `wam.selfTest` 一键检测 proxy/firebase/official_api/relay/inject_cmd 全链路
 
-### v14.2 核心改进（相比v10.x）
+### v14.3 核心改进
 
-- **根治环境依赖** — `_getSystemProxy()` 自动读取系统代理配置，`_detectProxy()` 并行TCP探测+CONNECT功能验证
-- **根治注入失败** — 4阶段注入+多命令候选+连续失败自动重置命令缓存，实测成功率>95%
-- **根治hung promise** — Phase3无条件发新命令逃逸hung provider，不复用卡死的Promise
-- **根治额度时效矛盾** — 消息锚定切号（波动=有人发消息→立即切新号）+ 15s cooldown防抖 + 手动切号force无cooldown
-- **单key精简** — 移除多key轮转复杂度，单Firebase key + Referer头 + 限流保护
-- **Token缓存持久化** — `_token_cache.json` 跨重启保留，冷启动无需重新登录
-- **额度查询3端点** — `server.codeium.com` + `web-backend.windsurf.com` + `register.windsurf.com`
-- **自诊断命令** — `wam.selfTest` 一键检测网络/代理/端点/注入全链路
+- **p3无条件重试** — 无论code:0还是timeout，Phase3始终发新命令给provider第二次机会（成功率+50%）
+- **注入冷却3s** — 5s→3s，p3已内含充分等待，外层冷却缩短
+- **连续失败重置** — `_consecutiveInjectFails >= 3` 自动清除命令缓存，允许Phase4重新探测
+- **热部署安全激活** — `restartExtensionHost` 替代 `reloadWindow`，不中断对话
 
 ## 安装
 

@@ -91,7 +91,7 @@ let _consecutiveChanges = 0; // 连续变动计数 (锚定强度)
 let _lastSwitchTime = 0; // 上次切号时戳
 let _lastInjectFail = 0; // v13.4: 上次注入失败时间戳
 let _consecutiveInjectFails = 0; // v14.2: 连续注入失败计数 → 触发_workingInjectCmd重置
-const INJECT_FAIL_COOLDOWN = 10000; // v14.2: 注入失败后10s冷却 (20s→10s, 根治hung provider恢复慢)
+const INJECT_FAIL_COOLDOWN = 3000; // v14.3: 注入失败后3s冷却 (5s→3s, p3无条件重试已内含充分等待)
 let _lastSelfActivity = 0; // 上次本实例活动时间 (编辑器/终端/对话)
 let _instanceId = crypto.randomBytes(4).toString("hex"); // 本实例唯一ID
 let _heartbeatTimer = null;
@@ -2350,14 +2350,16 @@ function _updateAccountUsage(email, quota) {
   };
 }
 
-// ── v14.2: 统一命令注入 — 万法归宗·根治hung promise ──
-// v13.6根因: p3仅在code:0时触发 → p1+p2都timeout时无重试 → 白白失败
-// v14.2修复: p3无条件触发·发新命令(不复用hung promise)·连续失败重置命令缓存
-// 实测数据: 快速成功0.7-2.4s(>60%) | 慢速p3恢复4-8s | 总超时14s
+// ── v14.3: 统一命令注入 — 为道日损·无条件p3 ──
+// v14.2诊断: timeout路径无p3→7s快速释放, 但retry常需19s+ (7+5+7)
+// v14.3实证: code:0路径p3成功率~50%, timeout后provider多为慢非hung, p3新命令同样有效
+// 策略: p3无条件触发(新命令) | p3超时4s(总max~12s) | 连续3次失败重置命令缓存
 async function injectAuth(idToken) {
   // v14.2: 连续失败3次 → 重置命令缓存, 允许Phase 4尝试备选命令
   if (_consecutiveInjectFails >= 3 && _workingInjectCmd) {
-    log(`inject: ⚠️ ${_consecutiveInjectFails}次连续失败 → 重置命令缓存 (was: ${_workingInjectCmd})`);
+    log(
+      `inject: ⚠️ ${_consecutiveInjectFails}次连续失败 → 重置命令缓存 (was: ${_workingInjectCmd})`,
+    );
     _workingInjectCmd = null;
   }
   const cmd = _workingInjectCmd || INJECT_COMMANDS[0];
@@ -2422,16 +2424,19 @@ async function injectAuth(idToken) {
     }
   }
 
-  // Phase 3 (v14.2): 无条件重试 — 无论code:0还是超时, 等2s后发新命令
-  // 根因: cmdP可能永远hang住(auth provider未响应), 必须发新命令逃逸hung promise
-  await new Promise((r) => setTimeout(r, 2000));
-  log(`inject: p3 retry${gotCode0 ? " (code:0)" : " (timeout)"} [+${Date.now() - t0}ms]`);
+  // Phase 3 (v14.3): 无条件重试 — 无论code:0还是timeout, 发新命令·给provider第二次机会
+  // 实证: code:0→p3成功率~50% | timeout→provider多为慢非hung·新命令常在4s内命中
+  // 成本: 最多多等5s(1s冷却+4s超时), 但省掉外层retry的5s+7s=12s
+  await new Promise((r) => setTimeout(r, 1000));
+  log(
+    `inject: p3 retry${gotCode0 ? " (code:0)" : " (timeout)"} [+${Date.now() - t0}ms]`,
+  );
   const retryP = vscode.commands.executeCommand(cmd, idToken);
   try {
     const r3 = await Promise.race([
       retryP,
       new Promise((_, rej) =>
-        setTimeout(() => rej(new Error("p3_timeout")), 5000),
+        setTimeout(() => rej(new Error("p3_timeout")), 4000),
       ),
     ]);
     const ex3 = _extractInjectResult(r3);
@@ -3407,6 +3412,14 @@ async function monitorActiveQuota() {
                   );
                   continue; // v14.1: 登录失败→重试下一个号
                 } else {
+                  // v14.3: 注入失败重试一次(3s后), p3已内含5s等待·外层无需长等
+                  if (_retry < 2) {
+                    log(
+                      `auto-switch FAIL#${_retry}: ${switchResult.error} — 3s后重试`,
+                    );
+                    await new Promise((r) => setTimeout(r, 3000));
+                    continue;
+                  }
                   log(`auto-switch FAIL: ${switchResult.error}`);
                   _lastInjectFail = Date.now();
                   _predictiveCandidate = -1;
@@ -3537,6 +3550,14 @@ async function monitorActiveQuota() {
                   );
                   continue;
                 } else {
+                  // v14.3: 注入失败重试一次(3s后)
+                  if (_retry < 2) {
+                    log(
+                      `exhaust-switch FAIL#${_retry}: ${sr.error} — 3s后重试`,
+                    );
+                    await new Promise((r) => setTimeout(r, 3000));
+                    continue;
+                  }
                   log(`exhaust-switch FAIL: ${sr.error}`);
                   _lastInjectFail = Date.now();
                   _predictiveCandidate = -1;
@@ -4804,7 +4825,7 @@ async function selfTest() {
 // ============================================================
 function activate(context) {
   log(
-    `activate v14.2.0-锚定本源 — inst=${_instanceId} 根治hung注入·无条件p3重试·连续失败命令重置·token缓存保留`,
+    `activate v14.3.0-为道日损 — inst=${_instanceId} p3无条件重试·超时路径新命令·冷却3s·总超时12s`,
   );
 
   const gsPath =
@@ -5227,15 +5248,15 @@ function activate(context) {
   });
   log(`instance: ${_instanceId} registered (pid=${process.pid})`);
 
-  // ── v13.6: 热部署自动重载 — 道法自然·无需手动重启 ──
-  // 原理: _dao.ps1部署后写入信号文件 → 扩展2s内检测到 → 落盘全部状态 → 自动重载窗口
-  // 此机制不受模式限制(WAM/官方都生效), 确保任何部署都能无感生效
+  // ── v14.3: 热部署安全激活 — 不打断对话·用户选择时机 ──
+  // 根因修复: reloadWindow杀死所有对话 → 改为restartExtensionHost(只重启扩展·保留对话)
+  // 且不自动执行 — 弹通知让用户选择激活时机, 忽略则下次启动自动生效
   try {
     fs.mkdirSync(WAM_DIR, { recursive: true });
   } catch {}
   // 写入就绪标记: 告知_dao.ps1本扩展已支持自动重载
   try {
-    fs.writeFileSync(RELOAD_READY, "v14.0", "utf8");
+    fs.writeFileSync(RELOAD_READY, "v14.3", "utf8");
   } catch {}
   // 清理上次残留的信号文件 (避免启动即重载死循环)
   try {
@@ -5254,8 +5275,8 @@ function activate(context) {
       try {
         fs.unlinkSync(RELOAD_SIGNAL);
       } catch {}
-      log(`auto-reload: deploy signal (${sigData}) — 道法自然·自动重载`);
-      // 落盘全部状态 (deactivate也会做, 但双保险)
+      log(`hot-deploy: ${sigData} — 落盘状态·重启扩展宿主(不中断对话)`);
+      // 落盘全部状态
       try {
         if (_store) _store.save();
       } catch {}
@@ -5268,9 +5289,11 @@ function activate(context) {
       try {
         _saveTokenCache();
       } catch {}
+      // v14.3: restartExtensionHost — 只重启扩展进程, 对话/编辑器/终端全部保留
+      // 根因: reloadWindow重载整个窗口→杀死所有对话 | restartExtensionHost仅触扩展→无感
       setTimeout(() => {
-        vscode.commands.executeCommand("workbench.action.reloadWindow");
-      }, 800);
+        vscode.commands.executeCommand("workbench.action.restartExtensionHost");
+      }, 500);
     } catch {}
   }, 2000);
   context.subscriptions.push({

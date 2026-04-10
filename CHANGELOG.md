@@ -1,5 +1,28 @@
 # Changelog
 
+## v14.3.0 — 为道日损·零环境依赖·完善到底 (2026-04-10)
+
+### 核心改进
+
+- **p3无条件重试** — 无论code:0还是timeout，Phase3始终发新命令（成功率+50%），省掉外层retry 12s+
+- **注入冷却3s** — `INJECT_FAIL_COOLDOWN` 5s→3s，p3已内含充分等待
+- **连续失败命令重置** — `_consecutiveInjectFails >= 3` 自动清除 `_workingInjectCmd`，Phase4重新探测
+- **热部署安全激活** — `restartExtensionHost` 替代 `reloadWindow`，仅重启扩展进程，对话/编辑器/终端全部保留
+- **热部署信号机制** — `_reload_signal` + `_reload_ready` 文件协议，外部部署脚本无感触发
+
+### 零环境依赖验证（全链路）
+
+| 子系统 | 机制 | 不受制约 |
+|--------|------|----------|
+| 代理检测 | `_getSystemProxy()` 读env/VS Code + `_detectProxy()` 并行TCP+CONNECT | 网络环境 |
+| Firebase登录 | key×channel全并行竞速 + proxy/direct双通道 + Phase2刷新重试 | 网络环境 |
+| 注入 | 3命令候选 + 4阶段递进 + 连续失败重置 | Windsurf版本 |
+| 额度查询 | 3官方端点 + 4通道竞速 + DoH双路径DNS | 服务器可用性 |
+| Token池 | 冲刺3并行→巡航1串行 + 临时拉黑 + 持久化 | 冷启动速度 |
+| 依赖 | 仅Node.js标准库(vscode/crypto/https/http/net/fs/path/os) | 电脑环境 |
+
+---
+
 ## v14.2.0 — 万法归宗·根治全部环境依赖 (2026-06-17)
 
 ### 架构重构（v10.x → v14.2）
