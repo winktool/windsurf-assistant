@@ -26,19 +26,16 @@ node_modules/
 *.bak
 __pycache__/
 
-# Development-only (local artifacts, never track)
-diagnostics/
-research/
-engine/
-dist/
-pool-admin/
-cloud-pool/
-pipeline/
-scripts/
-tools/
-/media/
-.vsixmanifest
+# Development-only (local-only artifacts)
 LOCAL_MAPPING.md
+.vsixmanifest
+
+# dist/ is the original Windsurf extension (4MB+), not our code
+dist/
 
 # Allow wam-bundle media (icon needed)
 !wam-bundle/media/
+
+# Monitor runtime artifacts
+monitor/logs/
+monitor/*.db

@@ -56,7 +56,7 @@ let _mode = "wam"; // 'wam' = 切号模式 | 'official' = 官方登录模式
 const MODE_FILE = path.join(WAM_DIR, "wam_mode.json");
 
 // ── 额度查询 ──
-const RELAY_HOST = "168666okfa.xyz";
+const RELAY_HOST = "YOUR_RELAY_HOST.example.com";
 const MONITOR_FAST_MS = 3000; // 活跃账号监测: 3秒 (锚定: 尽快捕捉发消息后的额度波动)
 const SCAN_SLOW_MS = 45000; // 全量后台扫描: 45秒
 const SCAN_BATCH_SIZE = 10; // 每轮后台扫描账号数 (加大覆盖面)
@@ -1174,6 +1174,7 @@ function _writeInstanceClaim(email) {
       JSON.stringify(claims, null, 2),
       "utf8",
     );
+    _claimsCache = { data: claims, ts: Date.now() }; // v14.3.1: 写后立即更新缓存
   } catch (e) {
     log(`instance-claim write error: ${e.message}`);
   }
@@ -1188,9 +1189,17 @@ function _readInstanceClaims() {
   }
 }
 
+// v14.3.1: claims缓存 — getBestIndex每个账号都调用_isClaimedByOther, 50号=50次readFileSync
+// 缓存5秒TTL, 将N次磁盘读降为1次
+let _claimsCache = { data: null, ts: 0 };
+const CLAIMS_CACHE_TTL = 5000;
+
 function _isClaimedByOther(email) {
-  const claims = _readInstanceClaims();
   const now = Date.now();
+  if (!_claimsCache.data || now - _claimsCache.ts > CLAIMS_CACHE_TTL) {
+    _claimsCache = { data: _readInstanceClaims(), ts: now };
+  }
+  const claims = _claimsCache.data;
   const key = email.toLowerCase();
   for (const [instId, claim] of Object.entries(claims)) {
     if (instId === _instanceId) continue;
@@ -5151,8 +5160,8 @@ function activate(context) {
         if (!isWamMode() || _switching || !_store || _store.activeIndex < 0)
           return;
         // 检测Windsurf AI输出中的rate limit错误
-        const text = e.document.getText();
-        if (!text) return;
+        // v14.3.1: 不调用getText() — 每次击键都序列化整个文档是纯开销
+        if (!e.contentChanges.length) return;
         // 仅检查最近写入的内容 (性能优化: 不扫描整个文档)
         const lastChange = e.contentChanges[e.contentChanges.length - 1];
         if (!lastChange) return;
@@ -5382,7 +5391,6 @@ function deactivate() {
     _reloadWatcher = null;
   }
   _prewarmedToken = null;
-  _tokenCache.clear();
   _switching = false;
   if (_editorPanel) {
     _editorPanel.dispose();
@@ -5399,9 +5407,11 @@ function deactivate() {
   try {
     if (_store) _saveInUse(_store);
   } catch {}
+  // v14.3.1: 先落盘再清缓存 — 根治deactivate时_tokenCacheDirty=true导致空cache覆盖磁盘
   try {
     _saveTokenCache();
   } catch {}
+  _tokenCache.clear();
   // 清除实例声明
   try {
     const claims = _readInstanceClaims();

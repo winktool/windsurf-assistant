@@ -46,16 +46,24 @@
 2. Windsurf 中 `Ctrl+Shift+P` → `Extensions: Install from VSIX...` → 选择下载的文件
 3. 重启 Windsurf，侧边栏出现「无感切号·账号管理」面板
 
-## 源码
-
-`wam-bundle/` 目录包含完整可读源码：
+## 项目结构
 
 ```
-wam-bundle/
-├── extension.js    # 切号引擎核心 (~5400行)
-├── package.json    # 扩展清单
-└── media/
-    └── icon.svg    # 侧边栏图标
+windsurf-assistant/
+├── wam-bundle/          # WAM 切号引擎 (VS Code 扩展源码)
+│   ├── extension.js     #   核心引擎 (~5400行)
+│   ├── package.json     #   扩展清单
+│   └── media/icon.svg   #   侧边栏图标
+├── monitor/             # Windsurf 实时监控仪表盘 (NEW)
+│   ├── windsurf_hot_monitor.py  # gRPC逆向 + HTTP API + SSE推送
+│   └── dashboard.html           # 万法归宗管理面板
+├── engine/              # 道引擎 (Python后端)
+├── pipeline/            # 注册管线 (账号铸造)
+├── cloud-pool/          # 云端号池服务
+├── pool-admin/          # 号池管理端
+├── tools/               # 工具集 (额度检查/模型矩阵/快速切号)
+├── scripts/             # 一键脚本 (部署/启动/注册)
+└── diagnostics/         # 诊断工具 (医生/看门狗/安全存储)
 ```
 
 ## 命令列表

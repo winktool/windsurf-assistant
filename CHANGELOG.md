@@ -1,5 +1,24 @@
 # Changelog
 
+## v14.4.0 — 去芜留菁·万法归宗 (2026-04-10)
+
+### 新增: Windsurf 实时监控仪表盘 (`monitor/`)
+
+- **gRPC逆向引擎** — 自动发现Windsurf LanguageServer端口，gRPC-Web + Connect协议双通道调用
+- **Protobuf解析器** — 纯Python实现，无第三方依赖，递归解析嵌套消息/varint/LEN字段
+- **12个REST API端点** — `/api/conversations` `/api/conversation/<id>` `/api/capabilities` `/api/snapshot` `/api/health` `/api/memories` `/api/mcp` `/api/settings` `/api/processes` `/api/state` `/api/grpc-methods` `/api/all`
+- **对话详情深度解析** — `GetCascadeTrajectory` gRPC逆向: 步骤/Token用量/模型/时长/用户消息/Agent回复全量提取
+- **SSE实时推送** — 事件流实时推送对话状态变更
+- **万法归宗管理面板** — 单页HTML仪表盘: 对话管理/重命名/删除/回退步骤/导出JSON/新建对话
+
+### 仓库整理
+
+- **去芜留菁** — 移除168个research脚本 + 124个legacy diagnostics + 58个one-off test/probe scripts
+- **代码同步** — engine/pipeline/tools/wam-bundle 全部从工作目录同步最新版
+- **安全审计** — 全仓库扫描并替换 relay域名/用户路径/API密钥前缀
+
+---
+
 ## v14.3.0 — 为道日损·零环境依赖·完善到底 (2026-04-10)
 
 ### 核心改进
