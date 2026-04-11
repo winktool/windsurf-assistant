@@ -1,4 +1,4 @@
-// WAM v17.1 — 道法自然·零硬编码·动态配置: 47个常量全部getter化·跨平台自适应·一切可覆盖
+// WAM v17.2 — 为道日损·72配置项零硬编码·唯变所适·道可道非常道·适配一切
 // 载营魄抱一，能无离乎？专气致柔，能如婴儿乎？
 // 五感原则: 切号绝不调用windsurf.logout, 绝不重启extension host, 绝不写state.vscdb
 // v15.0: Webview fetch()走Chromium渲染进程 — 与Windsurf官方登录完全同一网络路径
@@ -338,6 +338,95 @@ function _getRateLimitCooldownMs() {
 function _getDroughtCacheTtlMs() {
   return _cfg("droughtCacheTtlMs", 10000);
 }
+// ── v17.2 为道日损: 网络层/注入/切号/启动 — 一切时序常量getter化, 唯变所适 ──
+// ── 网络层 ──
+function _getHttpDefaultTimeoutMs() {
+  return _cfg("httpDefaultTimeoutMs", 12000);
+}
+function _getConnectTunnelTimeoutMs() {
+  return _cfg("connectTunnelTimeoutMs", 3000);
+}
+function _getProxyVerifyTimeoutMs() {
+  return _cfg("proxyVerifyTimeoutMs", 2000);
+}
+function _getNativeFetchTimeoutMs() {
+  return _cfg("nativeFetchTimeoutMs", 15000);
+}
+function _getFirebaseDirectTimeoutMs() {
+  return _cfg("firebaseDirectTimeoutMs", 8000);
+}
+function _getQuotaFetchTimeoutMs() {
+  return _cfg("quotaFetchTimeoutMs", 10000);
+}
+function _getDohTimeoutMs() {
+  return _cfg("dohTimeoutMs", 8000);
+}
+function _getSelfTestTimeoutMs() {
+  return _cfg("selfTestTimeoutMs", 8000);
+}
+// ── 注入引擎 ──
+function _getInjectP1TimeoutMs() {
+  return _cfg("inject.p1TimeoutMs", 3000);
+}
+function _getInjectP2TimeoutMs() {
+  return _cfg("inject.p2TimeoutMs", 4000);
+}
+function _getInjectP3CooldownMs() {
+  return _cfg("inject.p3CooldownMs", 1000);
+}
+function _getInjectP3TimeoutMs() {
+  return _cfg("inject.p3TimeoutMs", 4000);
+}
+function _getInjectP4TimeoutMs() {
+  return _cfg("inject.p4TimeoutMs", 5000);
+}
+function _getInjectResetThreshold() {
+  return _cfg("inject.resetThreshold", 3);
+}
+function _getInjectP4Threshold() {
+  return _cfg("inject.p4Threshold", 2);
+}
+// ── 切号协调 ──
+function _getSwitchLockForceReleaseMs() {
+  return _cfg("switchLockForceReleaseMs", 120000);
+}
+function _getSwitchLockPatienceMs() {
+  return _cfg("switchLockPatienceMs", 30000);
+}
+function _getAutoRetryDelayMs() {
+  return _cfg("autoRetryDelayMs", 3000);
+}
+// ── 启动/落盘 ──
+function _getStartupDelayMs() {
+  return _cfg("startupDelayMs", 3000);
+}
+function _getBridgeEnsureDelayMs() {
+  return _cfg("bridgeEnsureDelayMs", 8000);
+}
+function _getMonitorSaveThrottleMs() {
+  return _cfg("monitorSaveThrottleMs", 30000);
+}
+function _getCleanupLogoutTimeoutMs() {
+  return _cfg("cleanupLogoutTimeoutMs", 8000);
+}
+function _getEngineFirstTickDelayMs() {
+  return _cfg("engineFirstTickDelayMs", 2000);
+}
+function _getPostSwitchMonitorDelayMs() {
+  return _cfg("postSwitchMonitorDelayMs", 1500);
+}
+function _getScanBatchThrottleMs() {
+  return _cfg("scanBatchThrottleMs", 400);
+}
+function _getDeepProbeThrottleMs() {
+  return _cfg("deepProbeThrottleMs", 300);
+}
+function _getSocketProbeTimeoutMs() {
+  return _cfg("socketProbeTimeoutMs", 800);
+}
+function _getWatcherRecoveryDelayMs() {
+  return _cfg("watcherRecoveryDelayMs", 5000);
+}
 
 const INSTANCE_LOCK_FILE = path.join(WAM_DIR, "instance_claims.json");
 
@@ -666,7 +755,7 @@ async function cleanupThirdPartyState() {
     log("cleanup: windsurf.logout — 登出WAM会话");
     await Promise.race([
       vscode.commands.executeCommand("windsurf.logout"),
-      new Promise((r) => setTimeout(r, 8000)),
+      new Promise((r) => setTimeout(r, _getCleanupLogoutTimeoutMs())),
     ]);
     cleaned++;
     log("cleanup: logout OK");
@@ -1580,7 +1669,7 @@ function _httpsPost(url, body, opts = {}) {
         sysProxy.port,
         url,
         body,
-        opts.timeout || 12000,
+        opts.timeout || _getHttpDefaultTimeoutMs(),
         opts.headers || {},
       );
     }
@@ -1598,7 +1687,7 @@ function _httpsPost(url, body, opts = {}) {
         Host: parsed.hostname,
         ...(opts.headers || {}),
       },
-      timeout: opts.timeout || 12000,
+      timeout: opts.timeout || _getHttpDefaultTimeoutMs(),
       rejectUnauthorized:
         opts.rejectUnauthorized !== undefined ? opts.rejectUnauthorized : true,
       servername:
@@ -1631,7 +1720,7 @@ function _httpsViaProxy(
   proxyPort,
   targetUrl,
   body,
-  timeout = 12000,
+  timeout = _getHttpDefaultTimeoutMs(),
   extraHeaders = {},
 ) {
   return new Promise((resolve, reject) => {
@@ -1644,7 +1733,7 @@ function _httpsViaProxy(
       port: proxyPort,
       method: "CONNECT",
       path: `${parsed.hostname}:443`,
-      timeout: 3000,
+      timeout: _getConnectTunnelTimeoutMs(),
     });
     connReq.on("connect", (res, socket) => {
       if (res.statusCode !== 200) {
@@ -1722,13 +1811,13 @@ function _verifyProxyPort(host, port) {
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       resolve(false);
-    }, 2000);
+    }, _getProxyVerifyTimeoutMs());
     const connReq = http.request({
       host,
       port,
       method: "CONNECT",
       path: `${FIREBASE_HOST}:443`,
-      timeout: 1500,
+      timeout: _getProxyVerifyTimeoutMs() - 500,
     });
     connReq.on("connect", (res, socket) => {
       clearTimeout(timer);
@@ -1795,7 +1884,7 @@ function _getSystemProxy() {
       const { execSync } = require("child_process");
       const regOut = execSync(
         'reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyServer 2>nul',
-        { encoding: "utf8", timeout: 2000 },
+        { encoding: "utf8", timeout: _getProxyVerifyTimeoutMs() },
       );
       const m = regOut.match(/ProxyServer\s+REG_SZ\s+(.+)/i);
       if (m) {
@@ -1847,7 +1936,7 @@ function _detectDefaultGateway() {
       const { execSync } = require("child_process");
       const out = execSync("route print 0.0.0.0 2>nul", {
         encoding: "utf8",
-        timeout: 2000,
+        timeout: _getProxyVerifyTimeoutMs(),
       });
       const m = out.match(/0\.0\.0\.0\s+0\.0\.0\.0\s+(\d+\.\d+\.\d+\.\d+)/);
       if (m) return m[1];
@@ -1938,7 +2027,7 @@ function _detectProxy() {
       }
       for (const c of candidates) {
         const s = new net.Socket();
-        s.setTimeout(800);
+        s.setTimeout(_getSocketProbeTimeoutMs());
         s.connect(c.port, c.host, () => {
           s.destroy();
           alive.push(c);
@@ -2074,7 +2163,7 @@ function _nativeFetch(url, opts = {}) {
     const timer = setTimeout(() => {
       _fetchPending.delete(id);
       reject(new Error("native_timeout"));
-    }, opts.timeout || 15000);
+    }, opts.timeout || _getNativeFetchTimeoutMs());
     _fetchPending.set(id, { resolve, reject, timer });
     const msg = {
       type: "_fetch",
@@ -2118,7 +2207,7 @@ function _httpsPostRaw(url, body, opts = {}) {
         sysProxy.port,
         url,
         body,
-        opts.timeout || 12000,
+        opts.timeout || _getHttpDefaultTimeoutMs(),
       );
     }
   }
@@ -2136,7 +2225,7 @@ function _httpsPostRaw(url, body, opts = {}) {
         "connect-protocol-version": "1",
         ...(opts.headers || {}),
       },
-      timeout: opts.timeout || 12000,
+      timeout: opts.timeout || _getHttpDefaultTimeoutMs(),
       rejectUnauthorized: false,
       servername: parsed.hostname,
     };
@@ -2162,7 +2251,7 @@ function _httpsPostRawViaProxy(
   proxyPort,
   targetUrl,
   body,
-  timeout = 12000,
+  timeout = _getHttpDefaultTimeoutMs(),
 ) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(targetUrl);
@@ -2174,7 +2263,7 @@ function _httpsPostRawViaProxy(
       port: proxyPort,
       method: "CONNECT",
       path: `${parsed.hostname}:443`,
-      timeout: 3000,
+      timeout: _getConnectTunnelTimeoutMs(),
     });
     connReq.on("connect", (res, socket) => {
       if (res.statusCode !== 200) {
@@ -2507,16 +2596,23 @@ async function _firebaseVia(channel, email, password, key) {
   switch (channel) {
     case "direct":
       return _httpsPost(url, payload, {
-        timeout: 8000,
+        timeout: _getFirebaseDirectTimeoutMs(),
         headers: { Referer: _getFirebaseReferer() },
       });
 
     case "proxy":
       return _detectProxy().then((proxy) => {
         if (!proxy) throw new Error("no_proxy");
-        return _httpsViaProxy(proxy.host, proxy.port, url, payload, 10000, {
-          Referer: _getFirebaseReferer(),
-        });
+        return _httpsViaProxy(
+          proxy.host,
+          proxy.port,
+          url,
+          payload,
+          _getQuotaFetchTimeoutMs(),
+          {
+            Referer: _getFirebaseReferer(),
+          },
+        );
       });
 
     case "native":
@@ -2529,7 +2625,7 @@ async function _firebaseVia(channel, email, password, key) {
           Referer: _getFirebaseReferer(),
         },
         body: payload,
-        timeout: 12000,
+        timeout: _getHttpDefaultTimeoutMs(),
       }).then((resp) => {
         if (typeof resp.data === "string") {
           try {
@@ -2661,13 +2757,16 @@ async function _resolveRelayIP() {
     const proxy = await _detectProxy();
     if (proxy) {
       const dohResult = await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("doh_timeout")), 8000);
+        const timer = setTimeout(
+          () => reject(new Error("doh_timeout")),
+          _getDohTimeoutMs(),
+        );
         const connReq = http.request({
           host: proxy.host,
           port: proxy.port,
           method: "CONNECT",
           path: "dns.google:443",
-          timeout: 5000,
+          timeout: _getDohTimeoutMs() - 3000,
         });
         connReq.on("connect", (res, socket) => {
           if (res.statusCode !== 200) {
@@ -2685,7 +2784,7 @@ async function _resolveRelayIP() {
               headers: { Host: "dns.google" },
               servername: "dns.google",
               rejectUnauthorized: false,
-              timeout: 6000,
+              timeout: _getDohTimeoutMs() - 2000,
             },
             (resp) => {
               let d = "";
@@ -2747,7 +2846,7 @@ async function _resolveRelayIP() {
     const cfResult = await new Promise((cfResolve, cfReject) => {
       const timer = setTimeout(
         () => cfReject(new Error("cf_doh_timeout")),
-        6000,
+        _getDohTimeoutMs() - 2000,
       );
       const req = https.request(
         {
@@ -2758,7 +2857,7 @@ async function _resolveRelayIP() {
             Accept: "application/dns-json",
             Host: "cloudflare-dns.com",
           },
-          timeout: 5000,
+          timeout: _getDohTimeoutMs() - 3000,
           rejectUnauthorized: false,
         },
         (resp) => {
@@ -2841,7 +2940,7 @@ async function fetchAccountQuota(email, password) {
             },
             body: proto,
             binary: true,
-            timeout: 10000,
+            timeout: _getQuotaFetchTimeoutMs(),
           });
           if (resp.status === 200 && resp.data && resp.data.length > 20) {
             return { status: resp.status, buf: Buffer.from(resp.data) };
@@ -2861,7 +2960,7 @@ async function fetchAccountQuota(email, password) {
             proxy.port,
             url,
             proto,
-            10000,
+            _getQuotaFetchTimeoutMs(),
           );
           if (resp.status === 200 && resp.buf && resp.buf.length > 20)
             return resp;
@@ -2873,7 +2972,9 @@ async function fetchAccountQuota(email, password) {
     async () => {
       for (const url of _getOfficialPlanStatusUrls()) {
         try {
-          const resp = await _httpsPostRaw(url, proto, { timeout: 10000 });
+          const resp = await _httpsPostRaw(url, proto, {
+            timeout: _getQuotaFetchTimeoutMs(),
+          });
           if (resp.status === 200 && resp.buf && resp.buf.length > 20)
             return resp;
         } catch {}
@@ -2885,7 +2986,10 @@ async function fetchAccountQuota(email, password) {
       if (!planUrl) throw new Error("relay_not_configured");
       const ip = await _resolveRelayIP();
       if (!ip) throw new Error("no_relay_ip");
-      return _httpsPostRaw(planUrl, proto, { timeout: 12000, hostname: ip });
+      return _httpsPostRaw(planUrl, proto, {
+        timeout: _getHttpDefaultTimeoutMs(),
+        hostname: ip,
+      });
     },
     // 通道4: Relay via proxy (最后手段) — relay未配置时跳过
     async () => {
@@ -3002,7 +3106,10 @@ function _updateAccountUsage(email, quota) {
 // 策略: p3无条件触发(新命令) | p3超时4s(总max~12s) | 连续3次失败重置命令缓存
 async function injectAuth(idToken) {
   // v14.2: 连续失败3次 → 重置命令缓存, 允许Phase 4尝试备选命令
-  if (_consecutiveInjectFails >= 3 && _workingInjectCmd) {
+  if (
+    _consecutiveInjectFails >= _getInjectResetThreshold() &&
+    _workingInjectCmd
+  ) {
     log(
       `inject: ⚠️ ${_consecutiveInjectFails}次连续失败 → 重置命令缓存 (was: ${_workingInjectCmd})`,
     );
@@ -3019,7 +3126,7 @@ async function injectAuth(idToken) {
     const r1 = await Promise.race([
       cmdP,
       new Promise((_, rej) =>
-        setTimeout(() => rej(new Error("p1_timeout")), 3000),
+        setTimeout(() => rej(new Error("p1_timeout")), _getInjectP1TimeoutMs()),
       ),
     ]);
     const ex1 = _extractInjectResult(r1);
@@ -3047,7 +3154,10 @@ async function injectAuth(idToken) {
       const r2 = await Promise.race([
         cmdP, // 同一个Promise — 不重叠, 不混乱
         new Promise((_, rej) =>
-          setTimeout(() => rej(new Error("p2_timeout")), 4000),
+          setTimeout(
+            () => rej(new Error("p2_timeout")),
+            _getInjectP2TimeoutMs(),
+          ),
         ),
       ]);
       const ex2 = _extractInjectResult(r2);
@@ -3073,7 +3183,7 @@ async function injectAuth(idToken) {
   // Phase 3 (v14.3): 无条件重试 — 无论code:0还是timeout, 发新命令·给provider第二次机会
   // 实证: code:0→p3成功率~50% | timeout→provider多为慢非hung·新命令常在4s内命中
   // 成本: 最多多等5s(1s冷却+4s超时), 但省掉外层retry的5s+7s=12s
-  await new Promise((r) => setTimeout(r, 1000));
+  await new Promise((r) => setTimeout(r, _getInjectP3CooldownMs()));
   log(
     `inject: p3 retry${gotCode0 ? " (code:0)" : " (timeout)"} [+${Date.now() - t0}ms]`,
   );
@@ -3082,7 +3192,7 @@ async function injectAuth(idToken) {
     const r3 = await Promise.race([
       retryP,
       new Promise((_, rej) =>
-        setTimeout(() => rej(new Error("p3_timeout")), 4000),
+        setTimeout(() => rej(new Error("p3_timeout")), _getInjectP3TimeoutMs()),
       ),
     ]);
     const ex3 = _extractInjectResult(r3);
@@ -3102,7 +3212,10 @@ async function injectAuth(idToken) {
   }
 
   // Phase 4 (v14.2): 备选命令 — 连续失败3次或未确认命令时, 尝试所有备选
-  if (!_workingInjectCmd || _consecutiveInjectFails >= 2) {
+  if (
+    !_workingInjectCmd ||
+    _consecutiveInjectFails >= _getInjectP4Threshold()
+  ) {
     for (const altCmd of _getInjectCommands()) {
       if (altCmd === cmd) continue;
       log(`inject: p4 trying ${altCmd} [+${Date.now() - t0}ms]`);
@@ -3111,7 +3224,10 @@ async function injectAuth(idToken) {
         const r4 = await Promise.race([
           altP,
           new Promise((_, rej) =>
-            setTimeout(() => rej(new Error("p4_timeout")), 5000),
+            setTimeout(
+              () => rej(new Error("p4_timeout")),
+              _getInjectP4TimeoutMs(),
+            ),
           ),
         ]);
         const ex4 = _extractInjectResult(r4);
@@ -3166,7 +3282,7 @@ async function firebaseLookup(idToken) {
     const url = `https://${FIREBASE_HOST}/v1/accounts:lookup?key=${key}`;
     try {
       const result = await _httpsPost(url, payload, {
-        timeout: 8000,
+        timeout: _getFirebaseDirectTimeoutMs(),
         headers: { Referer: _getFirebaseReferer() },
       });
       if (result?.users?.[0]) return result.users[0];
@@ -3181,7 +3297,7 @@ async function firebaseLookup(idToken) {
           proxy.port,
           url2,
           payload,
-          10000,
+          _getQuotaFetchTimeoutMs(),
           { Referer: _getFirebaseReferer() },
         );
         if (result?.users?.[0]) return result.users[0];
@@ -3327,7 +3443,7 @@ async function verifyAndPurgeExpired(store, opts = {}) {
     }
 
     // 限速保护
-    await new Promise((r) => setTimeout(r, 300));
+    await new Promise((r) => setTimeout(r, _getDeepProbeThrottleMs()));
   }
 
   // Step 3: 缓存兜底 — 深度探测可能遗漏的(网络失败等), 用缓存数据补刀
@@ -3829,7 +3945,7 @@ function _startTokenPool() {
   };
   scheduleNext();
   // 首次立即触发
-  setTimeout(() => _tokenPoolTick(), 2000);
+  setTimeout(() => _tokenPoolTick(), _getEngineFirstTickDelayMs());
   log(
     `engine: token pool started (burst ${_getTokenPoolBurstMs() / 1000}s×${_getPoolParallelBurst()}并发×${_getTokenPoolBurstDuration() / 60000}min → cruise ${_getTokenPoolCruiseMs() / 1000}s) [v13.2]`,
   );
@@ -3873,7 +3989,7 @@ function _ensureEngines() {
   if (!_scanTimer) {
     _scanTimer = setInterval(() => scanBackgroundQuota(), _getScanSlowMs());
     // 首次立即触发一轮
-    setTimeout(() => scanBackgroundQuota(), 2000);
+    setTimeout(() => scanBackgroundQuota(), _getEngineFirstTickDelayMs());
     log("engine: scan started");
   }
   // v12: 永续Token活水池
@@ -3900,7 +4016,7 @@ async function monitorActiveQuota() {
   if (
     _switching &&
     _switchingStartTime > 0 &&
-    Date.now() - _switchingStartTime > 120000
+    Date.now() - _switchingStartTime > _getSwitchLockForceReleaseMs()
   ) {
     log(
       `⚠️ switching lock timeout (${Math.round((Date.now() - _switchingStartTime) / 1000)}s) — force release`,
@@ -3992,6 +4108,7 @@ async function monitorActiveQuota() {
             if (
               !candAcc ||
               !candAcc.password ||
+              candAcc.skipAutoSwitch ||
               _isClaimedByOther(candAcc.email)
             )
               bestI = -1;
@@ -4038,7 +4155,10 @@ async function monitorActiveQuota() {
                     );
                     _prewarmCandidateToken(_predictiveCandidate);
                   }
-                  setTimeout(() => monitorActiveQuota(), 1500);
+                  setTimeout(
+                    () => monitorActiveQuota(),
+                    _getPostSwitchMonitorDelayMs(),
+                  );
                   vscode.window.showInformationMessage(
                     `WAM: 消息锚定 → 已切换到 ${switchResult.account}`,
                   );
@@ -4058,7 +4178,9 @@ async function monitorActiveQuota() {
                     log(
                       `auto-switch FAIL#${_retry}: ${switchResult.error} — 3s后重试`,
                     );
-                    await new Promise((r) => setTimeout(r, 3000));
+                    await new Promise((r) =>
+                      setTimeout(r, _getAutoRetryDelayMs()),
+                    );
                     continue;
                   }
                   log(`auto-switch FAIL: ${switchResult.error}`);
@@ -4143,10 +4265,18 @@ async function monitorActiveQuota() {
             : snapWeekly < _getAutoSwitchThreshold()
               ? `Weekly耗尽(${snapWeekly}%)`
               : `Daily耗尽(${result.daily}%)`;
-          let bestI =
-            _predictiveCandidate >= 0
-              ? _predictiveCandidate
-              : _store.getBestIndex(activeI, true);
+          let bestI = _predictiveCandidate >= 0 ? _predictiveCandidate : -1;
+          if (bestI >= 0) {
+            const candAcc2 = _store.get(bestI);
+            if (
+              !candAcc2 ||
+              !candAcc2.password ||
+              candAcc2.skipAutoSwitch ||
+              _isClaimedByOther(candAcc2.email)
+            )
+              bestI = -1;
+          }
+          if (bestI < 0) bestI = _store.getBestIndex(activeI, true);
           if (bestI >= 0) {
             let bestAcc = _store.get(bestI);
             log(`⚡ 耗尽保护: ${reason} → ${bestAcc.email.substring(0, 20)}`);
@@ -4180,7 +4310,10 @@ async function monitorActiveQuota() {
                   _snapshotDirty = true;
                   _schedulePersist();
                   _burstUntil = Date.now() + _getBurstDuration();
-                  setTimeout(() => monitorActiveQuota(), 1500);
+                  setTimeout(
+                    () => monitorActiveQuota(),
+                    _getPostSwitchMonitorDelayMs(),
+                  );
                   vscode.window.showInformationMessage(
                     `WAM: ${reason} → 切换到 ${sr.account}`,
                   );
@@ -4197,7 +4330,9 @@ async function monitorActiveQuota() {
                     log(
                       `exhaust-switch FAIL#${_retry}: ${sr.error} — 3s后重试`,
                     );
-                    await new Promise((r) => setTimeout(r, 3000));
+                    await new Promise((r) =>
+                      setTimeout(r, _getAutoRetryDelayMs()),
+                    );
                     continue;
                   }
                   log(`exhaust-switch FAIL: ${sr.error}`);
@@ -4221,7 +4356,10 @@ async function monitorActiveQuota() {
     }
 
     // 节流落盘: 每30秒最多保存一次 (监测循环3-5s但磁盘写入无需那么频繁)
-    if (!_lastMonitorSaveTs || Date.now() - _lastMonitorSaveTs > 30000) {
+    if (
+      !_lastMonitorSaveTs ||
+      Date.now() - _lastMonitorSaveTs > _getMonitorSaveThrottleMs()
+    ) {
       _store.save();
       _lastMonitorSaveTs = Date.now();
     }
@@ -4239,7 +4377,7 @@ async function scanBackgroundQuota() {
   if (
     _switching &&
     _switchingStartTime > 0 &&
-    Date.now() - _switchingStartTime > 120000
+    Date.now() - _switchingStartTime > _getSwitchLockForceReleaseMs()
   ) {
     log(`⚠️ scan: switching lock timeout — force release`);
     _switching = false;
@@ -4334,7 +4472,7 @@ async function scanBackgroundQuota() {
         }
       } catch {}
 
-      await new Promise((r) => setTimeout(r, 400));
+      await new Promise((r) => setTimeout(r, _getScanBatchThrottleMs()));
     }
     _schedulePersist();
 
@@ -4431,7 +4569,7 @@ async function scanMissingExpiry() {
       _store.save();
       refreshAll();
     }
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, _getScanBatchThrottleMs()));
   }
 
   _store.save();
@@ -4510,7 +4648,7 @@ async function handleWebviewMessage(msg) {
       // v7.3: 手动抢占机制 — 如果_switching已超过30s, 强制释放锁允许手动切号
       if (_switching) {
         const lockAge = Date.now() - _switchingStartTime;
-        if (lockAge < 30000) {
+        if (lockAge < _getSwitchLockPatienceMs()) {
           vscode.window.showWarningMessage(
             `WAM: 正在切换中(${Math.round(lockAge / 1000)}s)...请稍候`,
           );
@@ -4626,6 +4764,11 @@ async function handleWebviewMessage(msg) {
       const acc3 = _store.get(msg.index);
       if (acc3) {
         acc3.skipAutoSwitch = !acc3.skipAutoSwitch;
+        // v17.1: 锁定时立即失效预判候选 — 道法自然: 锁即不可选
+        if (acc3.skipAutoSwitch && _predictiveCandidate === msg.index) {
+          _predictiveCandidate = -1;
+          log(`🔒 预判候选已失效: ${acc3.email.substring(0, 20)} 已锁定`);
+        }
         _store.save();
         refreshAll();
       }
@@ -5242,7 +5385,7 @@ async function doAutoRotate(store) {
   // v7.3.1: 智能轮转也需要抢占检查
   if (_switching) {
     const lockAge = Date.now() - _switchingStartTime;
-    if (lockAge < 30000) {
+    if (lockAge < _getSwitchLockPatienceMs()) {
       vscode.window.showWarningMessage(
         `WAM: 正在切换中(${Math.round(lockAge / 1000)}s)...请稍候`,
       );
@@ -5343,7 +5486,7 @@ function startFileWatcher() {
   _watcher.on("error", (err) => {
     log(`watcher error event: ${err?.message || "unknown"}`);
     _watcher = null;
-    setTimeout(startFileWatcher, 5000);
+    setTimeout(startFileWatcher, _getWatcherRecoveryDelayMs());
   });
   log("watcher: started");
 }
@@ -5395,7 +5538,7 @@ async function selfTest() {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: nativeBody,
-            timeout: 8000,
+            timeout: _getSelfTestTimeoutMs(),
           },
         );
         results.push({
@@ -5433,7 +5576,7 @@ async function selfTest() {
           proxy.port,
           `https://${FIREBASE_HOST}/v1/accounts:signUp?key=${_getFirebaseKeys()[0]}`,
           testBody,
-          8000,
+          _getSelfTestTimeoutMs(),
           { Referer: _getFirebaseReferer() },
         );
         fbOk = !!r;
@@ -5444,7 +5587,7 @@ async function selfTest() {
         const r = await _httpsPost(
           `https://${FIREBASE_HOST}/v1/accounts:signUp?key=${_getFirebaseKeys()[0]}`,
           testBody,
-          { timeout: 8000 },
+          { timeout: _getSelfTestTimeoutMs() },
         );
         fbOk = !!r;
       } catch {}
@@ -5473,10 +5616,12 @@ async function selfTest() {
             proxy.port,
             url,
             dummyProto,
-            8000,
+            _getSelfTestTimeoutMs(),
           );
         } else {
-          resp = await _httpsPostRaw(url, dummyProto, { timeout: 8000 });
+          resp = await _httpsPostRaw(url, dummyProto, {
+            timeout: _getSelfTestTimeoutMs(),
+          });
         }
         if (resp.status && resp.status < 500) {
           officialOk = true;
@@ -5507,7 +5652,7 @@ async function selfTest() {
           const dummyProto = encodeProtoString("test");
           const rPlanUrl = `https://${selfTestRelayHost}/windsurf/plan-status`;
           const resp = await _httpsPostRaw(rPlanUrl, dummyProto, {
-            timeout: 8000,
+            timeout: _getSelfTestTimeoutMs(),
             hostname: ip,
           });
           relayOk = resp.status && resp.status < 500;
@@ -5624,7 +5769,7 @@ function activate(context) {
       log("bridge: sidebar未在8s内打开 → 自动创建bridge panel");
       _ensureBridgeWebview();
     }
-  }, 8000);
+  }, _getBridgeEnsureDelayMs());
   context.subscriptions.push({
     dispose() {
       if (_bridgeEnsureTimer) clearTimeout(_bridgeEnsureTimer);
@@ -5680,7 +5825,7 @@ function activate(context) {
         // v7.3.1: 手动抢占机制 — 超过30s强制释放锁
         if (_switching) {
           const lockAge = Date.now() - _switchingStartTime;
-          if (lockAge < 30000) {
+          if (lockAge < _getSwitchLockPatienceMs()) {
             vscode.window.showWarningMessage(
               `WAM: 正在切换中(${Math.round(lockAge / 1000)}s)...请稍候`,
             );
@@ -5931,10 +6076,18 @@ function activate(context) {
             .getConfiguration("wam")
             .get("autoRotate", true);
           if (!autoRotate) return;
-          const bestI =
-            _predictiveCandidate >= 0
-              ? _predictiveCandidate
-              : _store.getBestIndex(_store.activeIndex, true);
+          let bestI = _predictiveCandidate >= 0 ? _predictiveCandidate : -1;
+          if (bestI >= 0) {
+            const rlCand = _store.get(bestI);
+            if (
+              !rlCand ||
+              !rlCand.password ||
+              rlCand.skipAutoSwitch ||
+              _isClaimedByOther(rlCand.email)
+            )
+              bestI = -1;
+          }
+          if (bestI < 0) bestI = _store.getBestIndex(_store.activeIndex, true);
           if (bestI < 0) {
             log("rate-limit: no available account");
             return;
@@ -6113,7 +6266,7 @@ function activate(context) {
       log("startup: 官方模式 — 零干扰·无监听/心跳/引擎");
     }
     updateStatusBar();
-  }, 3000);
+  }, _getStartupDelayMs());
 }
 
 function deactivate() {

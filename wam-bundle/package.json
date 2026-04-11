@@ -1,8 +1,8 @@
 {
   "name": "wam",
   "displayName": "WAM · 无感切号",
-  "description": "WAM v17.1 — 道法自然·零硬编码·动态配置·跨平台自适应·47常量getter化·零残留",
-  "version": "17.1.0",
+  "description": "WAM v17.2 — 为道日损·72配置项零硬编码·唯变所适·道可道非常道·适配一切",
+  "version": "17.2.0",
   "publisher": "local",
   "license": "MIT",
   "engines": { "vscode": "^1.85.0" },
@@ -270,6 +270,146 @@
           "type": "number",
           "default": 10000,
           "description": "Weekly干旱检测缓存TTL (毫秒, 默认10秒)"
+        },
+        "wam.httpDefaultTimeoutMs": {
+          "type": "number",
+          "default": 12000,
+          "description": "默认HTTPS请求超时 (毫秒)"
+        },
+        "wam.connectTunnelTimeoutMs": {
+          "type": "number",
+          "default": 3000,
+          "description": "CONNECT隧道建立超时 (毫秒)"
+        },
+        "wam.proxyVerifyTimeoutMs": {
+          "type": "number",
+          "default": 2000,
+          "description": "代理端口功能验证超时 (毫秒)"
+        },
+        "wam.nativeFetchTimeoutMs": {
+          "type": "number",
+          "default": 15000,
+          "description": "Chromium原生fetch超时 (毫秒)"
+        },
+        "wam.firebaseDirectTimeoutMs": {
+          "type": "number",
+          "default": 8000,
+          "description": "Firebase直连通道超时 (毫秒)"
+        },
+        "wam.quotaFetchTimeoutMs": {
+          "type": "number",
+          "default": 10000,
+          "description": "额度查询单通道超时 (毫秒)"
+        },
+        "wam.dohTimeoutMs": {
+          "type": "number",
+          "default": 8000,
+          "description": "DoH域名解析超时 (毫秒)"
+        },
+        "wam.selfTestTimeoutMs": {
+          "type": "number",
+          "default": 8000,
+          "description": "自诊断单项超时 (毫秒)"
+        },
+        "wam.inject.p1TimeoutMs": {
+          "type": "number",
+          "default": 3000,
+          "description": "注入Phase1快探超时 (毫秒)"
+        },
+        "wam.inject.p2TimeoutMs": {
+          "type": "number",
+          "default": 4000,
+          "description": "注入Phase2收割超时 (毫秒)"
+        },
+        "wam.inject.p3CooldownMs": {
+          "type": "number",
+          "default": 1000,
+          "description": "注入Phase3冷却间隔 (毫秒)"
+        },
+        "wam.inject.p3TimeoutMs": {
+          "type": "number",
+          "default": 4000,
+          "description": "注入Phase3重试超时 (毫秒)"
+        },
+        "wam.inject.p4TimeoutMs": {
+          "type": "number",
+          "default": 5000,
+          "description": "注入Phase4备选命令超时 (毫秒)"
+        },
+        "wam.inject.resetThreshold": {
+          "type": "number",
+          "default": 3,
+          "description": "连续注入失败N次后重置命令缓存"
+        },
+        "wam.inject.p4Threshold": {
+          "type": "number",
+          "default": 2,
+          "description": "连续注入失败N次后触发Phase4备选"
+        },
+        "wam.switchLockForceReleaseMs": {
+          "type": "number",
+          "default": 120000,
+          "description": "切号锁强制释放超时 (毫秒, 默认2分钟)"
+        },
+        "wam.switchLockPatienceMs": {
+          "type": "number",
+          "default": 30000,
+          "description": "手动切号等待切号锁耐心 (毫秒, 默认30秒)"
+        },
+        "wam.autoRetryDelayMs": {
+          "type": "number",
+          "default": 3000,
+          "description": "自动切号注入失败重试间隔 (毫秒)"
+        },
+        "wam.startupDelayMs": {
+          "type": "number",
+          "default": 3000,
+          "description": "扩展激活延迟 (毫秒)"
+        },
+        "wam.bridgeEnsureDelayMs": {
+          "type": "number",
+          "default": 8000,
+          "description": "Chromium桥自动创建延迟 (毫秒)"
+        },
+        "wam.monitorSaveThrottleMs": {
+          "type": "number",
+          "default": 30000,
+          "description": "监测循环磁盘落盘节流间隔 (毫秒)"
+        },
+        "wam.cleanupLogoutTimeoutMs": {
+          "type": "number",
+          "default": 8000,
+          "description": "清理时logout命令超时 (毫秒)"
+        },
+        "wam.engineFirstTickDelayMs": {
+          "type": "number",
+          "default": 2000,
+          "description": "引擎首次运行延迟 (毫秒)"
+        },
+        "wam.postSwitchMonitorDelayMs": {
+          "type": "number",
+          "default": 1500,
+          "description": "切号成功后监测重启延迟 (毫秒)"
+        },
+        "wam.scanBatchThrottleMs": {
+          "type": "number",
+          "default": 400,
+          "description": "扫描批次间限速间隔 (毫秒)"
+        },
+        "wam.deepProbeThrottleMs": {
+          "type": "number",
+          "default": 300,
+          "description": "深度探测限速间隔 (毫秒)"
+        },
+        "wam.socketProbeTimeoutMs": {
+          "type": "number",
+          "default": 800,
+          "description": "TCP端口探测超时 (毫秒)"
+        },
+        "wam.watcherRecoveryDelayMs": {
+          "type": "number",
+          "default": 5000,
+          "description": "文件监视器错误恢复延迟 (毫秒)"
         }
       }
     }
