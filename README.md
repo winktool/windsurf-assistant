@@ -2,7 +2,7 @@
 
 > 道可道，非常道。名可名，非常名。
 
-**WAM v17.1** — 道法自然 · 零硬编码 · 47常量动态配置 · 跨平台自适应 · 所有Windsurf环境 · 所有代理环境
+**WAM v17.3** — 反者道之动 · v10.2额度根因修复 · proto3零值实证 · D/W独立 · 万法归宗
 
 ---
 
@@ -10,12 +10,22 @@
 
 安装后，Windsurf 编码时额度耗尽会 **自动无感切换到下一个可用账号**，编码体验零中断。
 
-### v17.1 核心突破: 47个常量零残留
+### v17.3 核心修复: v10.2额度显示反转根因修复
 
-**审视插件本源，从根本底层去除各个无意义确定性编码。** 47个硬编码常量/魔法数字全部替换为动态getter函数，通过VS Code settings (`wam.*`) 可覆盖一切参数。真正实现彻底的适配：
+**Proto3零值省略** → field 15 absent = weekly剩余0% = 耗尽。旧版镜像逻辑将daily→weekly，W0被误读为W100 → 永不切号。v10.2彻底消除镜像。
+
+| 修复点 | 旧逻辑 | 新逻辑 |
+|--------|--------|--------|
+| `_extractQuotaFields` | 5分支镜像(dReset===wReset→镜像daily) | 2分支: 有值取值, absent=0 |
+| `getHealth` | weeklyUnknown→镜像daily | weeklyUnknown→兜底=0(耗尽) |
+| `_updateAccountUsage` | weekly可能为-1 | weekly始终0-100 |
+
+### v17.0-17.2: 零硬编码·动态配置
+
+47个硬编码常量全部getter化，通过VS Code settings (`wam.*`) 可覆盖一切参数。跨平台自适应 Win/Mac/Linux。
 
 | 维度 | 机制 | 配置入口 |
-|------|------|---------|
+|------|------|------|
 | **产品名** | `_detectProductName()` 自动识别 Windsurf/Cursor/Code | `wam.productName` |
 | **数据目录** | `_resolveDataDir()` Win/Mac/Linux 候选链 | `wam.dataDir` |
 | **网络环境** | `_getSystemProxy()` + `_detectProxy()` 并行TCP+CONNECT | `wam.proxy.extraPorts` |
@@ -24,8 +34,6 @@
 | **注入命令** | `_getInjectCommands()` 3命令候选可覆盖 | `wam.injectCommands` |
 | **中继** | `_getRelayHost()` 占位符自动禁用 | `wam.relayHost` |
 | **时序阈值** | 33个 getter (monitor/scan/burst/cooldown/pool/proxy等) | `wam.monitorIntervalMs` 等 |
-| **电脑环境** | 仅依赖 Node.js 标准库 | — |
-| **DNS环境** | DoH双路径 (Google + Cloudflare) | — |
 
 ### 核心能力
 
