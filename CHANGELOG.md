@@ -1,10 +1,10 @@
 # Changelog
 
-## v17.1.0 — 去芜留菁·44常量零残留 (2026-04-11)
+## v17.1.0 — 去芜留菁·47常量零残留 (2026-04-11)
 
-### 核心: 剩余16个硬编码常量全部getter化
+### 核心: 剩余19个硬编码常量+魔法数字全部getter化
 
-v17.0完成28个常量动态化后，审视发现仍有16个行为常量以`const`硬编码。v17.1彻底清除，实现**44常量零残留**。
+v17.0完成28个常量动态化后，审视发现仍有16个行为常量以`const`硬编码 + 3处魔法数字散落代码中。v17.1彻底清除，实现**47常量零残留**。
 
 | 分类 | 常量 | getter | 配置键 |
 |------|------|--------|--------|
@@ -24,11 +24,15 @@ v17.0完成28个常量动态化后，审视发现仍有16个行为常量以`cons
 | 巡航并行 | `POOL_PARALLEL_CRUISE` | `_getPoolParallelCruise()` | `wam.tokenPool.parallelCruise` |
 | 拉黑阈值 | `POOL_TEMP_BAN_THRESHOLD` | `_getPoolTempBanThreshold()` | `wam.tokenPool.tempBanThreshold` |
 | 拉黑时长 | `POOL_TEMP_BAN_DURATION` | `_getPoolTempBanDuration()` | `wam.tokenPool.tempBanDurationMs` |
+| 切号冷却 | `15000` (magic) | `_getSwitchCooldownMs()` | `wam.switchCooldownMs` |
+| 限速冷却 | `10000` (magic) | `_getRateLimitCooldownMs()` | `wam.rateLimitCooldownMs` |
+| 干旱缓存 | `10000` (magic) | `_getDroughtCacheTtlMs()` | `wam.droughtCacheTtlMs` |
 
 ### 同时修复
 
 - **文件头版本注释**: `v16.0` → `v17.1`
-- **`package.json`**: 新增16个配置属性声明
+- **`package.json`**: 新增19个配置属性声明 (两份package.json同步)
+- **`const UPPER_CASE = number`**: 零残留 (`grep` 验证通过)
 
 ---
 

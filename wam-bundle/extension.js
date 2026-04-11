@@ -1,4 +1,4 @@
-// WAM v17.1 — 道法自然·零硬编码·动态配置: 44个常量全部getter化·跨平台自适应·一切可覆盖
+// WAM v17.1 — 道法自然·零硬编码·动态配置: 47个常量全部getter化·跨平台自适应·一切可覆盖
 // 载营魄抱一，能无离乎？专气致柔，能如婴儿乎？
 // 五感原则: 切号绝不调用windsurf.logout, 绝不重启extension host, 绝不写state.vscdb
 // v15.0: Webview fetch()走Chromium渲染进程 — 与Windsurf官方登录完全同一网络路径
@@ -6,7 +6,7 @@
 // v15.2: 道可道非常道 — _httpsPost/_httpsPostRaw自动感知系统代理·LAN网关自动发现
 // v16.0: 万法归宗 — 统一代理描述符·消灭双全局状态
 // v17.0: 道法自然 — 28个硬编码常量getter化·_cfg()修复·跨平台自适应
-// v17.1: 去芜留菁 — 剩余16个常量(proxy/pool/quota/purge)全部getter化·44常量零残留
+// v17.1: 去芜留菁 — 剩余19个常量(proxy/pool/quota/purge/cooldown)全部getter化·47常量零残留
 // 锚定本源: Chromium原生桥 > 系统代理感知 > 直连 > 动态端口发现(末路兜底)
 const vscode = require("vscode");
 const crypto = require("crypto");

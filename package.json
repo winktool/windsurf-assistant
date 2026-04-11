@@ -1,7 +1,7 @@
 {
   "name": "windsurf-login-helper",
   "displayName": "WAM · Windsurf Account Manager",
-  "description": "WAM v17.1 — 道法自然·零硬编码·动态配置·跨平台自适应·44常量getter化·零残留",
+  "description": "WAM v17.1 — 道法自然·零硬编码·动态配置·跨平台自适应·47常量getter化·零残留",
   "version": "17.1.0",
   "license": "MIT",
   "engines": { "vscode": "^1.85.0" },
@@ -79,7 +79,20 @@
         "wam.tokenPool.parallelBurst": { "type": "number", "default": 3, "description": "冲刺并行度" },
         "wam.tokenPool.parallelCruise": { "type": "number", "default": 1, "description": "巡航并行度" },
         "wam.tokenPool.tempBanThreshold": { "type": "number", "default": 3, "description": "拉黑阈值" },
-        "wam.tokenPool.tempBanDurationMs": { "type": "number", "default": 900000, "description": "拉黑时长(ms)" }
+        "wam.tokenPool.tempBanDurationMs": { "type": "number", "default": 900000, "description": "拉黑时长(ms)" },
+        "wam.scanBatchSize": { "type": "number", "default": 10, "description": "扫描批次大小" },
+        "wam.changeThreshold": { "type": "number", "default": 0.01, "description": "变动检测阈值(%)" },
+        "wam.inUseCooldownMs": { "type": "number", "default": 120000, "description": "使用标记冷却(ms)" },
+        "wam.burstIntervalMs": { "type": "number", "default": 1500, "description": "突发轮询间隔(ms)" },
+        "wam.burstDurationMs": { "type": "number", "default": 60000, "description": "突发持续时长(ms)" },
+        "wam.dailyResetHourUtc": { "type": "number", "default": 8, "description": "日配额重置(UTC时)" },
+        "wam.weeklyResetDay": { "type": "number", "default": 0, "description": "周配额重置(0=周日)" },
+        "wam.waitResetHours": { "type": "number", "default": 3, "description": "重置等待(小时)" },
+        "wam.instanceHeartbeatMs": { "type": "number", "default": 30000, "description": "实例心跳(ms)" },
+        "wam.instanceDeadMs": { "type": "number", "default": 60000, "description": "实例死亡判定(ms)" },
+        "wam.switchCooldownMs": { "type": "number", "default": 15000, "description": "切号冷却(ms)" },
+        "wam.rateLimitCooldownMs": { "type": "number", "default": 10000, "description": "限速检测冷却(ms)" },
+        "wam.droughtCacheTtlMs": { "type": "number", "default": 10000, "description": "干旱缓存TTL(ms)" }
       }
     }
   }
