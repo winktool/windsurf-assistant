@@ -1,7 +1,7 @@
 {
   "name": "wam",
   "displayName": "WAM · 无感切号",
-  "description": "WAM v17.18 — 主仓归宗·默认源改指 windsurf-assistant 公开主仓·sanitize 去隐私·多网络/多用户场景 E2E 验证全绿·零配置·公网天网·DNS 污染自感自规避·太极生万物",
+  "description": "无感切号 · 账号管理 — 写代码时额度耗尽自动切号，毫无中断",
   "version": "17.18.0",
   "publisher": "zhouyoukang",
   "license": "MIT",
