@@ -1,10 +1,29 @@
 {
   "name": "wam",
   "displayName": "WAM · 无感切号",
-  "description": "WAM v15.2 — 道法自然: quota去native(CORS)·断路器·Referer修复",
-  "version": "15.2.0",
-  "publisher": "local",
+  "description": "WAM v17.18 — 主仓归宗·默认源改指 windsurf-assistant 公开主仓·sanitize 去隐私·多网络/多用户场景 E2E 验证全绿·零配置·公网天网·DNS 污染自感自规避·太极生万物",
+  "version": "17.18.0",
+  "publisher": "zhouyoukang",
   "license": "MIT",
+  "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zhouyoukang/windsurf-assistant.git"
+  },
+  "homepage": "https://github.com/zhouyoukang/windsurf-assistant",
+  "bugs": {
+    "url": "https://github.com/zhouyoukang/windsurf-assistant/issues"
+  },
+  "keywords": [
+    "windsurf",
+    "account",
+    "quota",
+    "switch",
+    "claude",
+    "devin",
+    "auto",
+    "adaptive"
+  ],
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Other"],
   "activationEvents": ["onStartupFinished"],
@@ -41,7 +60,12 @@
       { "command": "wam.officialMode", "title": "WAM: 官方模式 (暂停切号)" },
       { "command": "wam.wamMode", "title": "WAM: WAM切号模式" },
       { "command": "wam.status", "title": "WAM: 状态" },
-      { "command": "wam.selfTest", "title": "WAM: 自诊断 (网络/代理/端点/注入)" }
+      { "command": "wam.selfTest", "title": "WAM: 自诊断 (网络/代理/端点/注入)" },
+      { "command": "wam.diagWrite", "title": "WAM: 写盘诊断 (探查 save 失败根因)" },
+      { "command": "wam.restore", "title": "WAM: 从归档恢复账号 (挽救被秒删的号)" },
+      { "command": "wam.clearBlacklist", "title": "WAM: 一键复活 (清空黑名单+Devin探测)" },
+      { "command": "wam.testDevinSwitch", "title": "WAM: 测试 Devin 切号链路 (诊断·不注入)" },
+      { "command": "wam.checkUpdate", "title": "WAM: 检查更新 (autoUpdate)" }
     ],
     "configuration": {
       "title": "WAM 无感切号",
@@ -49,7 +73,7 @@
         "wam.autoRotate": {
           "type": "boolean",
           "default": true,
-          "description": "检测额度变动时自动切换到未使用的最优账号"
+          "description": "检测额度变动时自动切换到未使用的最优账号 · 唯一用户可见选项 (意图开关, 非性能参数)"
         }
       }
     }

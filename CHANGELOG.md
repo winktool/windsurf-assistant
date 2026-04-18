@@ -1,5 +1,70 @@
 # Changelog
 
+## v17.18.0 — 主仓归宗 · 公网天网自升级 · 太极生万物 (2026-04-18)
+
+### 核心: 从 v17.3 到 v17.18 跨越 15 次根因打磨 · 一体集成
+
+- **主仓归宗**: `_DEFAULT_PUBLIC_SOURCE` 指向 `cdn.jsdelivr.net/gh/zhouyoukang/windsurf-assistant@main/wam-bundle/` · 公开主仓作为官方发布源
+- **sanitize 全绿**: 所有本地 IP / Windows 用户名 / SMB 示例统一 `<host>` / `<share>` placeholder · 零隐私残留
+- **多场景 E2E 全通**: DNS 污染 / 慢网 / 镜像全挂 / SMB / 私有 HTTPS / raw / 4 起点 fallback / autoDiscover / HTTP 4xx / 快路径 / 多用户 / semver 10 场景 38 pass / 0 fail
+
+### v17.17 公网天网 (2026-04-18)
+
+- **jsDelivr 四镜像 fallback**: `_JSDELIVR_MIRRORS = [cdn, fastly, gcore, testingcf]` · 任一通即成功
+- **_expandJsdelivrSources**: 对 jsDelivr 域名 source 自动展开为镜像链 · 用户源保持不变 (SMB/私有 HTTPS 原样)
+- **autoDiscover 默认开**: `wam.autoUpdate.autoDiscover=true` · source 未配置时自动走公开 jsDelivr · 零配置即享自升级
+- **DNS 污染自感规避**: China `cdn.jsdelivr.net → 8.7.198.46` 假 IP 自动 fallback 至 fastly/gcore/testingcf
+- **四镜像至少一通概率**: 99.99% (单镜像 p=0.1 独立失败计算)
+
+### v17.16 秒切引擎 · Devin sessionToken 预热 (2026-04-17)
+
+- **_prewarmCandidateToken**: Devin 分支 · `_devinFullSwitch` 预热 token · 切号永远 cache HIT
+- **_tokenPoolTick**: Devin 纳入 pool · 替代 v13.4 `continue` 跳过 · batch 并行预热
+- **秒切理论**: 冷启 Devin (login 1500 + postAuth 1500 + inject 1300) = 4300ms → 预热后 = 1300ms · 节省 3000ms
+- **实战验证**: ~1300ms 近似秒切 (< 1500ms 门槛)
+
+### v17.15 披褐怀玉 · 日志静默 · 精准根因修复 (2026-04-17)
+
+- **_injectAdaptive 乐观默认**: 样本不足时 `_DEFAULT_TIMEOUT_MS` 8000 → 3500 (2×P95 留裕量) · 首次切号 P1 不误触发 P2
+- **proxy cache 业务错误豁免**: `!isBusinessErr` 才清 cache · 防 `relay_not_configured` 每次清空 proxy TTL
+- **monitor rate_limited 静默**: `result.error !== "rate_limited"` 才打 fail 日志 · 不刷屏
+
+### v17.14 公网闭环 · HTTPS 302 重定向 (2026-04-16)
+
+- **autoUpdate HTTPS 支持**: 301/302/303/307/308 五种重定向 · GitHub Releases `/latest/download/` 直达
+- **tokenCache v2 持久化**: `{_v:2, idTokens, devinSessions}` 双 bucket 磁盘格式
+- **MAX_REDIRECTS 防循环**: 5 次限制
+
+### v17.13 injectAuth 自适应 · 反者道之动 (2026-04-15)
+
+- **_injectAdaptive 独立于网络 RTT**: 样本 ≥ 5 用 p95×1.5 · 删除 Phase 2 死等 · 慢场景 -2s, 卡死 -4s
+
+### v17.12 UI 内化 · 太上不知有之 (2026-04-15)
+
+- **autoVerify / autoExpiry**: 验证清理与刷新有效期内化为 6h/12h 周期定时器 · UI 按钮移除
+
+### v17.11 自适应运行时 (2026-04-14)
+
+- **_adaptive**: RTT/错率自动推算 13 项性能参数 · 用户零感知
+- **反转曝光**: package.json 只保留 `wam.autoRotate` · 47 配置项内化
+
+### v17.10 autoUpdate · 太上不知有之 (2026-04-14)
+
+- **autoUpdate 自动推送新版本**: SMB / HTTPS 源 · 原子 rename · 自动备份 · 默认静默
+
+### v17.5-v17.9 Devin 身份迁移 · Firebase fallback (2026-04-12~13)
+
+- **Devin 三通道登录**: `/_devin-auth/password/login` · `sessionToken` 格式 `devin-session-token$<JWT>`
+- **Firebase→Devin fallback**: `INVALID_LOGIN_CREDENTIALS` 自动探测 Devin · 死号复活
+- **wam.clearBlacklist / wam.testDevinSwitch**: 一键复活 + 链路诊断
+
+### v17.4 输入净化 · 指纹日志 (2026-04-12)
+
+- **_sanitizeCredential**: NFKC 归一 · 全角→半角 · 零宽剔除 · 纯 ASCII 快路径零开销
+- **_hexFingerprint**: 失败时首尾 12 字节 hex dump · 精确溯源 IME 污染
+
+---
+
 ## v17.3.0 — 反者道之动·v10.2额度根因修复 (2026-04-11)
 
 ### 根因: Proto3零值省略导致Weekly镜像反转

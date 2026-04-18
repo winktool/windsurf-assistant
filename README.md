@@ -1,14 +1,36 @@
 # WAM · Windsurf Account Manager
 
-> 道可道，非常道。名可名，非常名。
+> 道可道，非常道。名可名，非常名。道法自然 · 无为而无不为。
 
-**WAM v17.3** — 反者道之动 · v10.2额度根因修复 · proto3零值实证 · D/W独立 · 万法归宗
+**WAM v17.18** — 主仓归宗 · 公网天网自升级 · 秒切引擎 · Devin 预热 · 太极生万物
 
 ---
 
 ## 它做什么
 
 安装后，Windsurf 编码时额度耗尽会 **自动无感切换到下一个可用账号**，编码体验零中断。
+
+> **零配置** — 装完即用，所有参数自动按网络实测调节。
+> **公网自升级** — 后续新版本自动拉取，无需手动更新。
+
+### v17.18 主仓归宗 · 公网天网自升级
+
+- **jsDelivr 四镜像 fallback**：`cdn → fastly → gcore → testingcf` 任一通即成功，四镜像至少一通概率 **99.99%**
+- **DNS 污染自规避**：`cdn.jsdelivr.net` 被污染时自动切 fastly / gcore / testingcf
+- **autoDiscover 默认开启**：`wam.autoUpdate.autoDiscover = true`，`source` 未配置即走公开主仓
+- **零隐私公开主仓**：默认源 `https://cdn.jsdelivr.net/gh/zhouyoukang/windsurf-assistant@main/wam-bundle/`
+- **sanitize 全绿**：本地 IP / 用户名 / SMB 示例全 placeholder 化
+
+### v17.16 秒切引擎 · Devin sessionToken 预热
+
+- **prewarm Devin**：`_prewarmCandidateToken` 异步填充 sessionToken，切号永远 cache HIT
+- **秒切**：冷启 Devin 4300ms → 预热后 **1300ms**（节省 3000ms · 接近秒切门槛 < 1500ms）
+- **token pool 含 Devin**：`_tokenPoolTick` 批处理并行预热，Cruise 周期 50min 刷新
+
+### v17.11 自适应运行时
+
+- **_adaptive**：实测 RTT/错率自动推算 13 项性能参数，用户零感知
+- **反转曝光**：package.json 只保留 `wam.autoRotate`，47 配置项内化成 `_cfg` override
 
 ### v17.3 核心修复: v10.2额度显示反转根因修复
 

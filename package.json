@@ -1,8 +1,13 @@
 {
   "name": "windsurf-login-helper",
   "displayName": "WAM · Windsurf Account Manager",
-  "description": "WAM v17.3 — 反者道之动·v10.2额度根因修复·proto3零值实证·D/W独立·万法归宗",
-  "version": "17.3.0",
+  "description": "WAM v17.18 — 主仓归宗·默认源指 windsurf-assistant·多镜像 jsDelivr fallback·DNS 污染自规避·autoDiscover 默认开·秒切引擎·Devin sessionToken 预热· 道法自然",
+  "version": "17.18.0",
+  "publisher": "zhouyoukang",
+  "repository": { "type": "git", "url": "https://github.com/zhouyoukang/windsurf-assistant.git" },
+  "homepage": "https://github.com/zhouyoukang/windsurf-assistant",
+  "bugs": { "url": "https://github.com/zhouyoukang/windsurf-assistant/issues" },
+  "keywords": ["windsurf", "account", "quota", "switch", "claude", "devin", "auto", "adaptive"],
   "license": "MIT",
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Other"],
@@ -40,7 +45,12 @@
       { "command": "wam.officialMode", "title": "WAM: 官方模式 (暂停切号)" },
       { "command": "wam.wamMode", "title": "WAM: WAM切号模式" },
       { "command": "wam.status", "title": "WAM: 状态" },
-      { "command": "wam.selfTest", "title": "WAM: 自诊断 (网络/代理/端点/注入)" }
+      { "command": "wam.selfTest", "title": "WAM: 自诊断 (网络/代理/端点/注入)" },
+      { "command": "wam.diagWrite", "title": "WAM: 写盘诊断 (探查 save 失败根因)" },
+      { "command": "wam.restore", "title": "WAM: 从归档恢复账号 (挣救被秒删的号)" },
+      { "command": "wam.clearBlacklist", "title": "WAM: 一键复活 (清空黑名单+Devin探测)" },
+      { "command": "wam.testDevinSwitch", "title": "WAM: 测试 Devin 切号链路 (诊断·不注入)" },
+      { "command": "wam.checkUpdate", "title": "WAM: 检查更新 (autoUpdate)" }
     ],
     "configuration": {
       "title": "WAM 无感切号",
@@ -92,7 +102,13 @@
         "wam.instanceDeadMs": { "type": "number", "default": 60000, "description": "实例死亡判定(ms)" },
         "wam.switchCooldownMs": { "type": "number", "default": 15000, "description": "切号冷却(ms)" },
         "wam.rateLimitCooldownMs": { "type": "number", "default": 10000, "description": "限速检测冷却(ms)" },
-        "wam.droughtCacheTtlMs": { "type": "number", "default": 10000, "description": "干旱缓存TTL(ms)" }
+        "wam.droughtCacheTtlMs": { "type": "number", "default": 10000, "description": "干旱缓存TTL(ms)" },
+        "wam.autoUpdate.enabled": { "type": "boolean", "default": true, "description": "v17.10 autoUpdate: 启用自动更新" },
+        "wam.autoUpdate.autoDiscover": { "type": "boolean", "default": true, "description": "v17.17 autoDiscover: source 未配置时默认走公开 jsDelivr 镜像 fallback (cdn→fastly→gcore→testingcf)" },
+        "wam.autoUpdate.source": { "type": "string", "default": "", "description": "autoUpdate 源: SMB 路径 或 HTTPS URL (空 = 走默认公开 jsDelivr 主仓)" },
+        "wam.autoUpdate.checkIntervalMs": { "type": "number", "default": 3600000, "description": "autoUpdate 检查间隔 (默认 1h·最小 1min)" },
+        "wam.autoUpdate.startDelayMs": { "type": "number", "default": 10000, "description": "启动后首次 autoUpdate 延迟 (ms)" },
+        "wam.autoUpdate.notifyUser": { "type": "boolean", "default": false, "description": "v17.10 完成自更新后是否弹窗通知用户 (太上不知有之默认静默)" }
       }
     }
   }

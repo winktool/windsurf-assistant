@@ -1,8 +1,34 @@
-// WAM v15.1 — 万法归宗·道法自然: 显式TLS隧道·自愈网络桥·全局断路器·Firebase限流感知
+// WAM v17.1 — 道法自然·零硬编码·动态配置: 47个常量全部getter化·跨平台自适应·一切可覆盖
 // 载营魄抱一，能无离乎？专气致柔，能如婴儿乎？
 // 五感原则: 切号绝不调用windsurf.logout, 绝不重启extension host, 绝不写state.vscdb
 // v15.0: Webview fetch()走Chromium渲染进程 — 与Windsurf官方登录完全同一网络路径
-// 只要用户能官方登录Windsurf → 此通道必然可达Firebase/Codeium · 道法自然
+// v15.1: Bridge生命周期管理 — startup自动创建·sidebar retainContext·网络变化感知·proxy缓存联动
+// v15.2: 道可道非常道 — _httpsPost/_httpsPostRaw自动感知系统代理·LAN网关自动发现
+// v16.0: 万法归宗 — 统一代理描述符·消灭双全局状态
+// v17.0: 道法自然 — 28个硬编码常量getter化·_cfg()修复·跨平台自适应
+// v17.1: 去芜留菁 — 剩余19个常量(proxy/pool/quota/purge/cooldown)全部getter化·47常量零残留
+// v17.2: 道法自然彻底 — FIREBASE_HOST getter化·scanPorts/gatewayPorts/planStatusUrls支持完全替换·零死角
+// v17.3: 反者道之动 — 破 verify-gate 秒归档死刑 (连续3次失败才归档) · save 错误见光 (双通道失败必告警) · 新增 wam.diagWrite 写盘根因诊断
+//   道家哲理: 旧版"添加即验证·验证即死刑"违反"无为而无不为", 让网络抖动/密码暂时错的账号永久殉葬
+//             今改为: INVALID 3次缓冲 + save() 错误必见光 + 主动诊断命令 = 内存与磁盘不再背离
+// v17.4: 太上不知有之 — 输入净化预防性植入 + 诊断指纹日志
+//   背景: 磁盘hex审计证实本次6号failure无全角污染(纯ASCII完整命中), 故净化并非当下根因
+//   保留原因: 对未来聊天软件/中文IME污染(*＊&＆$＄%％^＾@＠→全角) 自动免疫; 纯ASCII零开销快路径
+//   新增: verify-gate 失败日志带密码 hex 指纹(前后12字节), 下次再遇 INVALID_LOGIN_CREDENTIALS 可精确溯源
+// v17.5: 相观而行 — Devin 身份迁移适配 · 道法自然 (Level 1 + Level 2)
+//   根因: Cognition 收购 Windsurf 后身份迁至 Devin (/_devin-auth/password/login), 新账号只在 Devin 不在 Firebase
+//         浏览器手动登录走 Devin 成功, WAM 走 Firebase INVALID_LOGIN_CREDENTIALS 必败 → 6号被永久拉黑
+//   Level 1 (保护): _devinLogin 三通道登录 · verify-gate+pool-tick 拉黑前做 Devin 探测 · Devin-only 账号 _authSystem='devin' 标记受保护
+//                   新增 wam.clearBlacklist 一键复活命令: 清内存黑名单 + 批量 Devin 探测 + 重置 Firebase 计数
+//   Level 2 (完整切号链路):
+//     端点: /_backend/exa.seat_management_pb.SeatManagementService/WindsurfPostAuth
+//     流程: password → auth1_token (devinLogin) → sessionToken (devinPostAuth) → injectAuth(sessionToken)
+//     关键: Windsurf IDE 原生接受 3 种 token 前缀: sk-ws-01- / devin-session-token$ / cog_
+//           Devin sessionToken 格式为 "devin-session-token$<JWT>", 可直接走现有 windsurf.provideAuthTokenToAuthProvider 注入
+//     switchToAccount 新增 Devin 分支: _authSystem==='devin' → 走完整 Devin 链路 (跳过 Firebase)
+//                                      Firebase INVALID → 即时 Devin fallback, 成功则标记 + 注入
+//     新增 wam.testDevinSwitch: 诊断命令, 对任一账号验证 login+PostAuth 链路, 不真正注入
+// 锚定本源: Chromium原生桥 > 系统代理感知 > 直连 > 动态端口发现(末路兜底)
 const vscode = require("vscode");
 const crypto = require("crypto");
 const https = require("https");
@@ -13,30 +39,378 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 
-// ── 配置 ──
-const FIREBASE_KEYS = ["AIzaSyDsOl-1XpT5err0Tcnx8FFod1H8gVGIycY"];
-const FIREBASE_REFERER = "https://windsurf.com/";
-const FIREBASE_HOST = "identitytoolkit.googleapis.com";
-const PROXY_HOST = "127.0.0.1";
-const PROXY_PORTS = [
-  7890, 7897, 7891, 10808, 10809, 20808, 20809, 1080, 2080, 8118, 8889, 1081,
-  2081, 3128, 8080, 8123, 8124, 8125, 8126, 8127, 8128, 8129, 8130, 8131, 8132,
-  8133, 8134, 8135, 8136, 8137, 8138, 8139, 8140, 8141, 8142, 8143, 8144, 8145,
-  8146, 8147, 8148, 8149, 8150, 8151, 8152, 8153,
+// ── 配置 · 道法自然 — 一切从环境动态获取, 设置可覆盖, 零硬编码 ──
+
+// ── 产品名自适应: 检测实际IDE产品名 (Windsurf/Cursor/VSCode fork等) ──
+function _detectProductName() {
+  // 优先: VS Code settings 显式配置
+  try {
+    const cfgName = vscode.workspace
+      .getConfiguration("wam")
+      .get("productName", "");
+    if (cfgName) return cfgName;
+  } catch {}
+  // 次优: vscode.env.appName (运行时真实产品名)
+  try {
+    if (vscode.env.appName) {
+      // appName 可能是 "Windsurf", "Visual Studio Code", "Cursor" 等
+      const name = vscode.env.appName.split(/\s/)[0]; // 取第一个词
+      if (name && name.length > 1) return name;
+    }
+  } catch {}
+  return "Windsurf"; // 兜底默认
+}
+
+// ── 数据目录自适应: 跨平台 + 自定义安装 ──
+function _resolveDataDir(productName) {
+  // 优先: VS Code settings 显式配置
+  try {
+    const cfgDir = vscode.workspace.getConfiguration("wam").get("dataDir", "");
+    if (cfgDir && fs.existsSync(cfgDir)) return cfgDir;
+  } catch {}
+  // 按平台构建候选路径列表
+  const candidates = [];
+  const home = os.homedir();
+  switch (process.platform) {
+    case "win32": {
+      const appdata =
+        process.env.APPDATA || path.join(home, "AppData", "Roaming");
+      candidates.push(path.join(appdata, productName));
+      // 兼容: 可能叫 "Windsurf" 即使 productName 检测不同
+      if (productName !== "Windsurf")
+        candidates.push(path.join(appdata, "Windsurf"));
+      candidates.push(path.join(appdata, "Code")); // VS Code 兜底
+      break;
+    }
+    case "darwin": {
+      candidates.push(
+        path.join(home, "Library", "Application Support", productName),
+      );
+      if (productName !== "Windsurf")
+        candidates.push(
+          path.join(home, "Library", "Application Support", "Windsurf"),
+        );
+      candidates.push(
+        path.join(home, "Library", "Application Support", "Code"),
+      );
+      break;
+    }
+    default: {
+      // linux
+      candidates.push(path.join(home, ".config", productName));
+      if (productName !== "Windsurf")
+        candidates.push(path.join(home, ".config", "Windsurf"));
+      candidates.push(path.join(home, ".config", "Code"));
+      break;
+    }
+  }
+  // 返回第一个存在的
+  for (const dir of candidates) {
+    try {
+      if (fs.existsSync(dir)) return dir;
+    } catch {}
+  }
+  return candidates[0]; // 返回首选即使不存在
+}
+
+// ── 延迟初始化: activate()时调用一次, 之后全局可用 ──
+let PRODUCT_NAME = "Windsurf"; // activate()时由_initConfig()设置
+let DATA_DIR = ""; // 产品数据根目录 (如 %APPDATA%/Windsurf)
+
+// ── 配置读取辅助: 从wam.*设置读取, 带类型安全默认值 ──
+function _cfg(key, defaultVal) {
+  try {
+    const val = vscode.workspace.getConfiguration("wam").get(key);
+    // 道法自然: 0/false是合法值, 只拒绝undefined/null; 空字符串仅在默认值非字符串时回退
+    if (val === undefined || val === null) return defaultVal;
+    if (val === "" && typeof defaultVal !== "string") return defaultVal;
+    return val;
+  } catch {}
+  return defaultVal;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// v17.11 太上·不知有之 · 自适应运行时 (Adaptive Runtime)
+// ───────────────────────────────────────────────────────────────────
+// 反者道之动: v17.9-17.10 曝光 19 项用户可调 → v17.11 彻底反转
+// 唯变所适: 根据实测 RTT P95 + 错误率自动计算 13 项性能参数
+// 功成而弗居: 用户零感知零配置, ops 仍可通过 _cfg override 应急
+// 为道日损: package.json 只保留 wam.autoRotate (用户意图开关, 非参数)
+// ═══════════════════════════════════════════════════════════════════
+const _adaptive = {
+  // 实测指标 · 滑动窗口
+  _rttSamples: [], // 最近 50 次成功请求 RTT (ms)
+  _errorSamples: [], // 最近 100 次请求结果 (0=ok, 1=err)
+  _lastRecompute: 0,
+  _RECOMPUTE_INTERVAL_MS: 5000, // 5s 节流避免抖动
+
+  // 自动导出值 · 初始默认 = v17.10 默认值 (零破坏兼容)
+  injectPhase1Timeout: 3000,
+  injectPhase2Timeout: 4000,
+  injectPhase3Timeout: 4000,
+  injectPhase4Timeout: 5000,
+  dohTimeout: 8000,
+  logoutTimeout: 8000,
+  injectRetryDelay: 1000,
+  purgeDelay: 1500,
+  switchRetryDelay: 3000,
+  watcherRestartDelay: 5000,
+  scanConcurrency: 4,
+  scanPerBatchDelay: 200,
+  monitorIntervalMs: 3000,
+  scanIntervalMs: 45000,
+  quotaMinIntervalMs: 10000,
+  switchCooldownMs: 15000,
+
+  // 采样入口 · 由 _httpsPostRaw / _httpsPostRawViaProxy 调用
+  sampleRtt(ms) {
+    if (typeof ms !== "number" || ms <= 0 || ms > 60000) return; // 过滤异常值
+    this._rttSamples.push(ms);
+    if (this._rttSamples.length > 50) this._rttSamples.shift();
+    this._maybeRecompute();
+  },
+  sampleOutcome(ok) {
+    this._errorSamples.push(ok ? 0 : 1);
+    if (this._errorSamples.length > 100) this._errorSamples.shift();
+    this._maybeRecompute();
+  },
+
+  // 统计计算
+  _rttP95() {
+    if (this._rttSamples.length < 3) return 500; // 样本不足 · 乐观默认 500ms
+    const sorted = [...this._rttSamples].sort((a, b) => a - b);
+    return sorted[Math.floor(sorted.length * 0.95)] || 500;
+  },
+  _errRate() {
+    if (this._errorSamples.length < 3) return 0; // 样本不足 · 零错误
+    let sum = 0;
+    for (const e of this._errorSamples) sum += e;
+    return sum / this._errorSamples.length;
+  },
+  _clamp(v, lo, hi) {
+    return Math.max(lo, Math.min(hi, Math.round(v)));
+  },
+
+  // 核心: 唯变所适 · 根据 RTT/错率自动调整所有性能参数
+  _maybeRecompute() {
+    const now = Date.now();
+    if (now - this._lastRecompute < this._RECOMPUTE_INTERVAL_MS) return;
+    this._lastRecompute = now;
+    const rtt = this._rttP95();
+    const err = this._errRate();
+
+    // ── 超时类: RTT × 倍数 · 慢网自动放大 · 上下限防失控 ──
+    // 基准: 本地 ~50ms · 国内 ~200-500ms · VPN/跨境 ~1000-3000ms
+    this.injectPhase1Timeout = this._clamp(rtt * 3, 3000, 15000);
+    this.injectPhase2Timeout = this._clamp(rtt * 4, 4000, 20000);
+    this.injectPhase3Timeout = this._clamp(rtt * 4, 4000, 20000);
+    this.injectPhase4Timeout = this._clamp(rtt * 5, 5000, 25000);
+    this.dohTimeout = this._clamp(rtt * 10, 5000, 30000);
+    this.logoutTimeout = this._clamp(rtt * 5, 8000, 30000);
+
+    // ── 并发类: 错率低→升, 错率高→降 (err=0→8, err=0.1→~4, err=0.5→~1, err=1→1) ──
+    this.scanConcurrency = this._clamp(8 / (1 + err * 10), 1, 16);
+
+    // ── 节流类: 错率高时放慢 (err=0→基准, err=0.5→~2.5x, err=1→~4x) ──
+    const slowFactor = 1 + err * 3;
+    this.scanIntervalMs = this._clamp(45000 * slowFactor, 30000, 180000);
+    this.scanPerBatchDelay = this._clamp(200 * (1 + err * 5), 100, 2000);
+    this.monitorIntervalMs = this._clamp(3000 * (1 + err * 2), 2000, 10000);
+    this.quotaMinIntervalMs = this._clamp(10000 * (1 + err * 5), 10000, 60000);
+    this.switchCooldownMs = this._clamp(15000 * (1 + err * 2), 15000, 60000);
+    this.switchRetryDelay = this._clamp(3000 * (1 + err * 3), 3000, 15000);
+    this.injectRetryDelay = this._clamp(1000 * (1 + err * 3), 1000, 5000);
+    this.purgeDelay = this._clamp(1500 * (1 + err * 2), 1500, 5000);
+    this.watcherRestartDelay = this._clamp(5000 * (1 + err * 5), 5000, 30000);
+  },
+
+  // 诊断快照 (供 log 用, 不暴露给用户 UI)
+  snapshot() {
+    return {
+      rttP95: Math.round(this._rttP95()),
+      errRate: Math.round(this._errRate() * 1000) / 1000,
+      samples: { rtt: this._rttSamples.length, err: this._errorSamples.length },
+      exports: {
+        injectPhase1: this.injectPhase1Timeout,
+        injectPhase2: this.injectPhase2Timeout,
+        injectPhase3: this.injectPhase3Timeout,
+        injectPhase4: this.injectPhase4Timeout,
+        doh: this.dohTimeout,
+        logout: this.logoutTimeout,
+        scanConcurrency: this.scanConcurrency,
+        scanInterval: this.scanIntervalMs,
+        monitorInterval: this.monitorIntervalMs,
+        quotaMinInterval: this.quotaMinIntervalMs,
+        switchCooldown: this.switchCooldownMs,
+      },
+    };
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// v17.13 反者道之动 · injectAuth 自适应 (独立于网络 RTT)
+// ───────────────────────────────────────────────────────────────────
+// 逆流推原: v17.11 _adaptive 把 injectAuth 超时绑到网络 RTT (rtt*3)
+//           但 executeCommand 是 IDE 内部调用 · 无关网络
+//           结果 P1=3000ms 误触发 P2 的 4s 延续死等 · 90% 切号浪费 1-2s
+// 唯变所适: _injectAdaptive 记录 executeCommand 实测耗时 · 自学 p95
+//           样本 < 5: 悲观默认 8000ms (防误触发 P2)
+//           样本 ≥ 5: p95 × 1.5, clamp [3000, 15000]
+//           重试延迟: p95 × 0.1, clamp [100, 2000], 默认 200ms
+// 柔弱胜刚强: 删除 Phase 2 死等 (原 P1+P2 合并) · 慢场景 -2s, 卡死 -4s
+// ═══════════════════════════════════════════════════════════════════
+const _injectAdaptive = {
+  _latencies: [], // 最近 30 次成功 executeCommand 耗时 (ms)
+  _MAX_SAMPLES: 30,
+  // v17.15 冷启乐观: 实战 P95 ~1500ms · 3500ms=2×P95 保留裕量
+  // 旧 8000ms 过于悲观 · 首次切号 P1 必超时 → 触发 P2 浪费 4-5s
+  _DEFAULT_TIMEOUT_MS: 3500,
+  _DEFAULT_RETRY_DELAY_MS: 200, // 样本不足时激进重试
+
+  // 采样入口 · 由 injectAuth 成功分支调用
+  sample(ms) {
+    if (typeof ms !== "number" || ms <= 0 || ms > 30000) return; // 过滤异常
+    this._latencies.push(ms);
+    if (this._latencies.length > this._MAX_SAMPLES) this._latencies.shift();
+  },
+
+  // 统计
+  _p95() {
+    if (this._latencies.length < 5) return this._DEFAULT_TIMEOUT_MS;
+    const sorted = [...this._latencies].sort((a, b) => a - b);
+    return sorted[Math.floor(sorted.length * 0.95)] || this._DEFAULT_TIMEOUT_MS;
+  },
+  _clamp(v, lo, hi) {
+    return Math.max(lo, Math.min(hi, Math.round(v)));
+  },
+
+  // 主超时 (样本足够时 p95 × 1.5, 留 50% 裕量)
+  getTimeoutMs() {
+    if (this._latencies.length < 5) return this._DEFAULT_TIMEOUT_MS;
+    return this._clamp(this._p95() * 1.5, 3000, 15000);
+  },
+
+  // 重试延迟 (p95 × 0.1, 极短让 IDE 喘息即可)
+  getRetryDelayMs() {
+    if (this._latencies.length < 5) return this._DEFAULT_RETRY_DELAY_MS;
+    return this._clamp(this._p95() * 0.1, 100, 2000);
+  },
+
+  // 诊断快照
+  snapshot() {
+    return {
+      samples: this._latencies.length,
+      p95: Math.round(this._p95()),
+      timeout: this.getTimeoutMs(),
+      retryDelay: this.getRetryDelayMs(),
+    };
+  },
+};
+
+// ── Firebase配置 — 可通过wam.firebase.*覆盖 ──
+function _getFirebaseKeys() {
+  const extra = _cfg("firebase.extraKeys", []);
+  const base = ["AIzaSyDsOl-1XpT5err0Tcnx8FFod1H8gVGIycY"];
+  return Array.isArray(extra) && extra.length > 0 ? [...base, ...extra] : base;
+}
+function _getFirebaseReferer() {
+  return (
+    _cfg("firebase.referer", "https://windsurf.com/") || "https://windsurf.com/"
+  );
+}
+function _getFirebaseHost() {
+  return _cfg("firebase.host", "identitytoolkit.googleapis.com");
+}
+
+// v16.0: 万法归宗 — 消灭一切固定端口/固定地址常量
+// 代理发现优先级: 系统代理(env/vscode/registry) > LAN网关 > localhost动态扫描
+// 端口扫描仅为末路兜底 — 真正的proxy由 _getSystemProxy() 动态获取
+const _DEFAULT_SCAN_PORTS = [
+  7890, 7897, 7891, 10808, 10809, 1080, 8118, 3128, 8080,
 ];
+function _getFallbackScanPorts() {
+  // 道法自然: scanPorts完全替换, extraPorts追加扩展
+  const override = _cfg("proxy.scanPorts", []);
+  if (Array.isArray(override) && override.length > 0) return override;
+  const extra = _cfg("proxy.extraPorts", []);
+  const base = _DEFAULT_SCAN_PORTS;
+  if (Array.isArray(extra) && extra.length > 0) {
+    const merged = [...base];
+    for (const p of extra) {
+      if (typeof p === "number" && !merged.includes(p)) merged.push(p);
+    }
+    return merged;
+  }
+  return base;
+}
+// LAN网关扫描端口 — 同样可扩展
+const _DEFAULT_GW_PORTS = [7890, 3128, 8080, 1080];
+function _getGatewayPorts() {
+  // 道法自然: gatewayPorts完全替换, extraGatewayPorts追加扩展
+  const override = _cfg("proxy.gatewayPorts", []);
+  if (Array.isArray(override) && override.length > 0) return override;
+  const extra = _cfg("proxy.extraGatewayPorts", []);
+  const base = _DEFAULT_GW_PORTS;
+  if (Array.isArray(extra) && extra.length > 0) {
+    const merged = [...base];
+    for (const p of extra) {
+      if (typeof p === "number" && !merged.includes(p)) merged.push(p);
+    }
+    return merged;
+  }
+  return base;
+}
+
 // v14.0: 官方API端点 — 直连Windsurf/Codeium, 不经中继, 根治relay单点故障
-const OFFICIAL_PLAN_STATUS_URLS = [
+// 可通过 wam.officialEndpoints 追加自定义端点
+const _DEFAULT_PLAN_STATUS_URLS = [
   "https://server.codeium.com/exa.seat_management_pb.SeatManagementService/GetPlanStatus",
   "https://web-backend.windsurf.com/exa.seat_management_pb.SeatManagementService/GetPlanStatus",
   "https://register.windsurf.com/exa.seat_management_pb.SeatManagementService/GetPlanStatus",
 ];
+// v16: Claude可用性地检 — RegisterUser + CheckChatCapacity (唯一可靠的Claude访问权验证)
+const _REGISTER_URL =
+  "https://server.codeium.com/exa.seat_management_pb.SeatManagementService/RegisterUser";
+const _CHAT_CAPACITY_URL =
+  "https://server.codeium.com/exa.language_server_pb.LanguageServerService/CheckChatCapacity";
+const _CLAUDE_PROBE_MODEL = "claude-sonnet-4-6"; // 探测用模型: pro_trial可用, free不可用
+function _getOfficialPlanStatusUrls() {
+  // 道法自然: planStatusUrls完全替换, officialEndpoints追加扩展
+  const override = _cfg("planStatusUrls", []);
+  if (Array.isArray(override) && override.length > 0) return override;
+  const extra = _cfg("officialEndpoints", []);
+  if (Array.isArray(extra) && extra.length > 0)
+    return [..._DEFAULT_PLAN_STATUS_URLS, ...extra];
+  return _DEFAULT_PLAN_STATUS_URLS;
+}
+
 // v14.0: 注入命令候选 — 版本自适应, 按优先级尝试
-const INJECT_COMMANDS = [
+// 可通过 wam.injectCommands 覆盖整个列表
+const _DEFAULT_INJECT_COMMANDS = [
   "windsurf.provideAuthTokenToAuthProvider",
   "codeium.provideAuthToken",
   "windsurf.provideAuthToken",
 ];
+function _getInjectCommands() {
+  const custom = _cfg("injectCommands", []);
+  if (Array.isArray(custom) && custom.length > 0) return custom;
+  return _DEFAULT_INJECT_COMMANDS;
+}
 let _workingInjectCmd = null; // 缓存验证成功的注入命令
+
+// ── Relay配置 — 可通过wam.relayHost覆盖, 占位符自动禁用 ──
+function _getRelayHost() {
+  const host = _cfg("relayHost", "");
+  // 占位符/空值 → 返回null, 调用方跳过relay通道
+  if (
+    !host ||
+    host === "YOUR_RELAY_HOST.example.com" ||
+    host.includes("example.com")
+  )
+    return null;
+  return host;
+}
+
 const WAM_DIR = path.join(os.homedir(), ".wam-hot");
 const TOKEN_FILE = path.join(WAM_DIR, "oneshot_token.json");
 const RESULT_FILE = path.join(WAM_DIR, "inject_result.json");
@@ -46,7 +420,8 @@ const INUSE_FILE = path.join(WAM_DIR, "inuse_marks.json");
 const RELOAD_SIGNAL = path.join(WAM_DIR, "_reload_signal");
 const RELOAD_READY = path.join(WAM_DIR, "_reload_ready");
 // TRIAL_MAX_DAYS已移除 — 官方Trial是14天(非90天), 且过期后仍有配额, 不再用时间猜测过期
-const PURGE_INTERVAL_MS = 6 * 3600 * 1000; // 每6小时自动检查一次
+// PURGE_INTERVAL_MS → _getPurgeIntervalMs() (v17.1 getter化)
+const WAM_VERSION = "17.18.0"; // 集中版本号 — 道法自然·一处定义 | v17.18.0: 主仓归宗·默认源改指 windsurf-assistant 公开主仓·sanitize SMB 示例去隐私·多网络/多用户场景 E2E 验证全绿·太极生万物
 
 let _store = null;
 let _sidebarProvider = null;
@@ -58,6 +433,9 @@ let _watcher = null;
 // 只要用户能官方登录Windsurf, 此通道必然可达Firebase/Codeium
 let _fetchIdCounter = 0;
 const _fetchPending = new Map();
+let _bridgeReady = false; // v15.1: Chromium桥就绪标志 — 道法自然: 有桥才走桥
+let _bridgeReadyCallbacks = []; // v15.1: 桥就绪后执行的回调队列
+let _bridgeEnsureTimer = null; // v15.1: 自动确保桥可用的定时器
 let _switching = false;
 let _switchingStartTime = 0; // v7.3: 切号锁开始时间, 用于超时释放+手动抢占
 let _pollTimer = null;
@@ -66,24 +444,209 @@ let _lastPurgeTime = 0;
 let _mode = "wam"; // 'wam' = 切号模式 | 'official' = 官方登录模式
 const MODE_FILE = path.join(WAM_DIR, "wam_mode.json");
 
-// ── 额度查询 ──
-const RELAY_HOST = "168666okfa.xyz";
-const MONITOR_FAST_MS = 3000; // 活跃账号监测: 3秒 (锚定: 尽快捕捉发消息后的额度波动)
-const SCAN_SLOW_MS = 45000; // 全量后台扫描: 45秒
-const SCAN_BATCH_SIZE = 10; // 每轮后台扫描账号数 (加大覆盖面)
-const CHANGE_THRESHOLD = 0.01; // 额度变化检测阈值: 任意变动即标记 (近零阈值, 仅过滤浮点噪声)
-const TOKEN_CACHE_TTL = 50 * 60000; // idToken缓存50分钟
-const INUSE_COOLDOWN_MS = 120000; // 使用中标记冷却: 120秒无新波动才清除 (锚定: 快标记·慢清除·防误判)
-const BURST_MS = 1500; // 突发模式: 1.5秒一轮 (锚定: 用户连续发消息时极速追踪)
-const BURST_DURATION = 60000; // 突发模式持续60秒 (锚定: 覆盖用户一轮对话周期)
-const AUTO_SWITCH_THRESHOLD = 5; // 自动切号阈值: min(D,W) < 5% 才触发切号
-const PREDICTIVE_THRESHOLD = 25; // 预判切号阈值: < 25% 时预选候选账号
-const DAILY_RESET_HOUR_UTC = 8; // 官方Daily重置时间 = 4:00 PM GMT+8 = 8:00 UTC
-const WEEKLY_RESET_DAY = 0; // 官方Weekly重置日 = Sunday (JS: 0=Sun, 6=Sat) — 诊断实证: field 18指向Sunday
-const WAIT_RESET_HOURS = 3; // 如果Daily将在此时间内重置，且Weekly充足，则等待重置而非切号
+// ── 性能参数 · v17.11 太上不知有之: 自适应主导, _cfg override 作为 ops 应急兜底 ──
+// 用户零感知: package.json 不曝光, _adaptive 自动从 RTT/错率推算
+function _getMonitorFastMs() {
+  const v = _cfg("monitorIntervalMs", null);
+  return typeof v === "number" && v > 0 ? v : _adaptive.monitorIntervalMs;
+}
+function _getScanSlowMs() {
+  const v = _cfg("scanIntervalMs", null);
+  return typeof v === "number" && v > 0 ? v : _adaptive.scanIntervalMs;
+}
+function _getScanBatchSize() {
+  return _cfg("scanBatchSize", 10);
+}
+function _getChangeThreshold() {
+  return _cfg("changeThreshold", 0.01);
+}
+function _getTokenCacheTtl() {
+  return _cfg("tokenCacheTtlMin", 50) * 60000;
+}
+function _getInuseCooldownMs() {
+  return _cfg("inUseCooldownMs", 120000);
+}
+function _getBurstMs() {
+  return _cfg("burstIntervalMs", 1500);
+}
+function _getBurstDuration() {
+  return _cfg("burstDurationMs", 60000);
+}
+function _getAutoSwitchThreshold() {
+  return _cfg("autoSwitchThreshold", 5);
+}
+function _getPredictiveThreshold() {
+  return _cfg("predictiveThreshold", 25);
+}
+function _getDailyResetHourUtc() {
+  return _cfg("dailyResetHourUtc", 8);
+}
+function _getWeeklyResetDay() {
+  return _cfg("weeklyResetDay", 0);
+}
+function _getWaitResetHours() {
+  return _cfg("waitResetHours", 3);
+}
+function _getInstanceHeartbeatMs() {
+  return _cfg("instanceHeartbeatMs", 30000);
+}
+function _getInstanceDeadMs() {
+  return _cfg("instanceDeadMs", 60000);
+}
+// v17.1 去芜留菁: 所有行为常量均已getter化, 零残留
+// ── 注入/清理 时序 ──
+function _getInjectFailCooldown() {
+  return _cfg("injectFailCooldownMs", 3000);
+}
+function _getPurgeIntervalMs() {
+  return _cfg("purgeIntervalMs", 21600000);
+}
+// ── 代理缓存 TTL ──
+function _getProxyCacheTtl() {
+  return _cfg("proxyCacheTtlMs", 300000);
+}
+function _getProxyFailTtl() {
+  return _cfg("proxyFailTtlMs", 30000);
+}
+// ── 实例Claims缓存 ──
+function _getClaimsCacheTtl() {
+  return _cfg("claimsCacheTtlMs", 5000);
+}
+// ── 额度查询节流 · v17.11 自适应 ──
+function _getQuotaMinInterval() {
+  const v = _cfg("quotaMinIntervalMs", null);
+  return typeof v === "number" && v > 0 ? v : _adaptive.quotaMinIntervalMs;
+}
+function _getQuota429Backoff() {
+  return _cfg("quota429BackoffMs", 60000);
+}
+// ── Relay IP缓存 ──
+function _getRelayIpTtl() {
+  return _cfg("relayIpTtlMs", 600000);
+}
+// ── Token活水池 ──
+function _getTokenPoolBurstMs() {
+  return _cfg("tokenPool.burstMs", 5000);
+}
+function _getTokenPoolCruiseMs() {
+  return _cfg("tokenPool.cruiseMs", 45000);
+}
+function _getTokenPoolBurstDuration() {
+  return _cfg("tokenPool.burstDurationMs", 180000);
+}
+function _getTokenPoolMargin() {
+  return _cfg("tokenPool.marginMs", 600000);
+}
+function _getPoolParallelBurst() {
+  return _cfg("tokenPool.parallelBurst", 3);
+}
+function _getPoolParallelCruise() {
+  return _cfg("tokenPool.parallelCruise", 1);
+}
+function _getPoolTempBanThreshold() {
+  return _cfg("tokenPool.tempBanThreshold", 3);
+}
+function _getPoolTempBanDuration() {
+  return _cfg("tokenPool.tempBanDurationMs", 900000);
+}
+// ── 切号/限速冷却 · v17.11 自适应 ──
+function _getSwitchCooldownMs() {
+  const v = _cfg("switchCooldownMs", null);
+  return typeof v === "number" && v > 0 ? v : _adaptive.switchCooldownMs;
+}
+function _getRateLimitCooldownMs() {
+  return _cfg("rateLimitCooldownMs", 10000);
+}
+function _getDroughtCacheTtlMs() {
+  return _cfg("droughtCacheTtlMs", 10000);
+}
+// v17.11 太上不知有之: 自适应主导, _cfg override 作 ops 应急兜底 ──────────
+// 道法自然 · 实测 RTT/错率自动推算, 用户零感知零配置
+function _getScanConcurrency() {
+  const v = _cfg("scanConcurrency", null);
+  return typeof v === "number" && v >= 1 ? v : _adaptive.scanConcurrency;
+}
+function _getScanPerBatchDelayMs() {
+  const v = _cfg("scanPerBatchDelayMs", null);
+  return typeof v === "number" && v >= 0 ? v : _adaptive.scanPerBatchDelay;
+}
+function _getLogoutTimeoutMs() {
+  const v = _cfg("logoutTimeoutMs", null);
+  return typeof v === "number" && v > 0 ? v : _adaptive.logoutTimeout;
+}
+function _getInjectRetryDelayMs() {
+  const v = _cfg("injectRetryDelayMs", null);
+  return typeof v === "number" && v > 0 ? v : _adaptive.injectRetryDelay;
+}
+function _getPurgeDelayMs() {
+  const v = _cfg("purgeDelayMs", null);
+  return typeof v === "number" && v > 0 ? v : _adaptive.purgeDelay;
+}
+function _getSwitchRetryDelayMs() {
+  const v = _cfg("switchRetryDelayMs", null);
+  return typeof v === "number" && v > 0 ? v : _adaptive.switchRetryDelay;
+}
+function _getWatcherRestartDelayMs() {
+  const v = _cfg("watcherRestartDelayMs", null);
+  return typeof v === "number" && v > 0 ? v : _adaptive.watcherRestartDelay;
+}
+// injectAuth 4 段 timeout (自适应)
+function _getInjectPhase1TimeoutMs() {
+  const v = _cfg("injectPhase1TimeoutMs", null);
+  return typeof v === "number" && v > 0 ? v : _adaptive.injectPhase1Timeout;
+}
+function _getInjectPhase2TimeoutMs() {
+  const v = _cfg("injectPhase2TimeoutMs", null);
+  return typeof v === "number" && v > 0 ? v : _adaptive.injectPhase2Timeout;
+}
+function _getInjectPhase3TimeoutMs() {
+  const v = _cfg("injectPhase3TimeoutMs", null);
+  return typeof v === "number" && v > 0 ? v : _adaptive.injectPhase3Timeout;
+}
+function _getInjectPhase4TimeoutMs() {
+  const v = _cfg("injectPhase4TimeoutMs", null);
+  return typeof v === "number" && v > 0 ? v : _adaptive.injectPhase4Timeout;
+}
+function _getDohTimeoutMs() {
+  const v = _cfg("dohTimeoutMs", null);
+  return typeof v === "number" && v > 0 ? v : _adaptive.dohTimeout;
+}
+function _getStartupScanDelayMs() {
+  return _cfg("startupScanDelayMs", 2000); // 启动后首次 scan 延迟
+}
+function _getMonitorBurstDelayMs() {
+  return _cfg("monitorBurstDelayMs", 1500); // burst 后 monitor 再触发延迟
+}
+// v17.10 太上·不知有之: autoUpdate 自动推送新版本 (各扩展无感接收)
+// v17.17 公网天网: autoDiscover 默认开启 · source 未配置时默认走 jsDelivr 多镜像 fallback · 道法自然
+function _getAutoUpdateEnabled() {
+  return _cfg("autoUpdate.enabled", true); // 默认启用 · v17.17 后无配置亦能走公网
+}
+function _getAutoUpdateAutoDiscover() {
+  // v17.17: source 未设时 · 是否自动使用 jsDelivr 默认源 + 多镜像 fallback
+  return _cfg("autoUpdate.autoDiscover", true);
+}
+// v17.18 主仓归宗: 默认源指向公开主仓 windsurf-assistant/wam-bundle/ · 零隐私·对外正式发布地址
+const _DEFAULT_PUBLIC_SOURCE =
+  "https://cdn.jsdelivr.net/gh/zhouyoukang/windsurf-assistant@main/wam-bundle/";
+function _getAutoUpdateSource() {
+  const userSrc = _cfg("autoUpdate.source", ""); // SMB 路径 或 HTTPS URL
+  if (userSrc) return userSrc;
+  // v17.17 道法自然: 用户未配置时·若 autoDiscover=true 则默认用公网 jsDelivr (fallback 链自动选通的镜像)
+  if (_getAutoUpdateAutoDiscover()) return _DEFAULT_PUBLIC_SOURCE;
+  return "";
+}
+function _getAutoUpdateCheckIntervalMs() {
+  return Math.max(60000, _cfg("autoUpdate.checkIntervalMs", 3600000)); // 默认 1h · 最小 1min
+}
+function _getAutoUpdateStartDelayMs() {
+  return _cfg("autoUpdate.startDelayMs", 10000); // 启动后延迟首次检查
+}
+function _getAutoUpdateNotifyUser() {
+  return _cfg("autoUpdate.notifyUser", false); // 默认静默 · 太上不知有之
+}
+
 const INSTANCE_LOCK_FILE = path.join(WAM_DIR, "instance_claims.json");
-const INSTANCE_HEARTBEAT_MS = 30000; // 实例心跳: 30秒
-const INSTANCE_DEAD_MS = 60000; // 实例死亡判定: 60秒无心跳
 
 let _quotaSnapshots = new Map(); // email -> {daily, weekly, ts}
 let _tokenCache = new Map(); // email -> {idToken, expiresAt}
@@ -102,7 +665,6 @@ let _consecutiveChanges = 0; // 连续变动计数 (锚定强度)
 let _lastSwitchTime = 0; // 上次切号时戳
 let _lastInjectFail = 0; // v13.4: 上次注入失败时间戳
 let _consecutiveInjectFails = 0; // v14.2: 连续注入失败计数 → 触发_workingInjectCmd重置
-const INJECT_FAIL_COOLDOWN = 3000; // v14.3: 注入失败后3s冷却 (5s→3s, p3无条件重试已内含充分等待)
 let _lastSelfActivity = 0; // 上次本实例活动时间 (编辑器/终端/对话)
 let _instanceId = crypto.randomBytes(4).toString("hex"); // 本实例唯一ID
 let _heartbeatTimer = null;
@@ -126,6 +688,38 @@ function log(msg) {
     fs.appendFileSync(LOG_FILE, line);
   } catch {}
   console.log("WAM:", msg);
+}
+
+// ── 凭证净化 — 道法自然·反者道之动 ──
+// 聊天软件/输入法/Markdown渲染器 会把 ASCII 特殊字符悄悄换成 look-alike 全角/零宽:
+//   "*" ↔ "＊"(U+FF0A)   "&" ↔ "＆"(U+FF06)   "$" ↔ "＄"(U+FF04)
+//   "%" ↔ "％"(U+FF05)   "^" ↔ "＾"(U+FF3E)   "@" ↔ "＠"(U+FF20)
+//   NBSP(U+00A0) / ZWSP(U+200B) / ZWNJ(U+200C) / ZWJ(U+200D) / BOM(U+FEFF)
+// 肉眼看是 ASCII, bytes 却非 ASCII → Firebase 返回 INVALID_LOGIN_CREDENTIALS
+// 修复: 入池前先 NFKC 归一 (全角→半角) + 剔零宽. 对纯ASCII无副作用.
+function _sanitizeCredential(s) {
+  if (typeof s !== "string" || !s) return s;
+  // 快路径: 纯 ASCII 直接返回, 零开销
+  let allAscii = true;
+  for (let i = 0; i < s.length; i++) {
+    if (s.charCodeAt(i) > 0x7f) {
+      allAscii = false;
+      break;
+    }
+  }
+  if (allAscii) return s;
+  // 慢路径: NFKC 归一化 + 剔除零宽字符 + 剔除 NBSP
+  return s.normalize("NFKC").replace(/[\u200B-\u200D\uFEFF\u00A0]/g, "");
+}
+
+// 调试用: 把字符串首尾 16 字节 hex dump (便于排查伪装字符)
+function _hexFingerprint(s) {
+  if (typeof s !== "string" || !s) return "";
+  const buf = Buffer.from(s, "utf8");
+  if (buf.length <= 24) return buf.toString("hex");
+  return (
+    buf.slice(0, 12).toString("hex") + ".." + buf.slice(-12).toString("hex")
+  );
 }
 
 // ── 持久化引擎 — 快照/使用中标记 落盘 (反者道之动: 不信内存, 只信磁盘) ──
@@ -186,7 +780,7 @@ function _loadInUse(store) {
       const now = Date.now();
       let loaded = 0;
       for (const [k, v] of Object.entries(data)) {
-        if (v && v.lastChange && now - v.lastChange < INUSE_COOLDOWN_MS) {
+        if (v && v.lastChange && now - v.lastChange < _getInuseCooldownMs()) {
           const existing = store._inUse.get(k);
           // 只合并更新的标记 (不覆盖本实例更新鲜的数据)
           if (!existing || v.lastChange > existing.lastChange) {
@@ -224,7 +818,7 @@ function getNextDailyResetMs() {
       now.getUTCFullYear(),
       now.getUTCMonth(),
       now.getUTCDate(),
-      DAILY_RESET_HOUR_UTC,
+      _getDailyResetHourUtc(),
       0,
       0,
     ),
@@ -241,13 +835,16 @@ function getNextWeeklyResetMs() {
       now.getUTCFullYear(),
       now.getUTCMonth(),
       now.getUTCDate(),
-      DAILY_RESET_HOUR_UTC,
+      _getDailyResetHourUtc(),
       0,
       0,
     ),
   );
   // 找到下一个Sunday 4PM UTC+8 (诊断实证: Windsurf weekly reset = Sunday)
-  while (d.getUTCDay() !== WEEKLY_RESET_DAY || d.getTime() <= now.getTime()) {
+  while (
+    d.getUTCDay() !== _getWeeklyResetDay() ||
+    d.getTime() <= now.getTime()
+  ) {
     d = new Date(d.getTime() + 86400000);
   }
   return d.getTime();
@@ -266,7 +863,8 @@ function hoursUntilWeeklyReset() {
 // 干旱模式下: 不因W0触发切号，只看Daily，避免无效切号死循环
 function isWeeklyDrought() {
   const now = Date.now();
-  if (now - _droughtCache.ts < 10000) return _droughtCache.value;
+  if (now - _droughtCache.ts < _getDroughtCacheTtlMs())
+    return _droughtCache.value;
   if (!_store) {
     _droughtCache = { value: false, ts: now };
     return false;
@@ -278,7 +876,7 @@ function isWeeklyDrought() {
     const h = _store.getHealth(a);
     if (!h.checked) continue;
     checked++;
-    if (h.weekly <= AUTO_SWITCH_THRESHOLD) wDry++;
+    if (h.weekly <= _getAutoSwitchThreshold()) wDry++;
   }
   const result = checked > 0 && wDry / checked >= 0.8;
   _droughtCache = { value: result, ts: now };
@@ -299,13 +897,10 @@ function isTrialPlan(plan) {
 
 function isClaudeAvailable(health) {
   const plan = (health.plan || "").toLowerCase();
-  // Free plan + 无配额: 唯一确定的死号
-  if (
-    plan === "free" &&
-    (health.daily || 0) === 0 &&
-    (health.weekly || 0) === 0
-  )
-    return false;
+  // v17.8 道法自然: 删除 plan==='devin' 假豁免 — Devin 账号走真实 plan (Trial/Pro/Free) 判断
+  // v16根因修复: Free plan无论配额多少, Claude付费模型均不可用
+  // 根因: free plan有D100月度配额(免费模型), 旧代码误以为D>0=Claude可用
+  if (plan === "free") return false;
   // 付费计划: Claude始终可用
   if (["pro", "enterprise", "team", "individual"].includes(plan)) return true;
   // 有实际配额(D>0或W>0) → 可用(无论planEnd是否过期)
@@ -321,28 +916,31 @@ function isClaudeAvailable(health) {
 function isAccountSwitchable(health) {
   // Claude不可用(Free/试用过期) → 不可切
   if (!isClaudeAvailable(health)) return false;
+  // v17.8 道法自然: 删除 plan==='devin' 假豁免 — Devin 账号与普通账号同轨走真实 D/W 判断
+  //   Devin fallback 成功 (sessionToken 拿到真实 plan) → 按 D/W 自然评估
+  //   Devin fallback 失败 → daily/weekly=0 → 不可切 (真实反映, 不再虚构永续)
   // v9.3: weeklyUnknown时只用daily判断, 不因W未知而误拒
   const effectiveW = health.weeklyUnknown ? health.daily : health.weekly;
   const eff = Math.min(health.daily, effectiveW);
-  if (eff > AUTO_SWITCH_THRESHOLD) return true;
+  if (eff > _getAutoSwitchThreshold()) return true;
   // Weekly干旱模式 或 weeklyUnknown: Daily充足即可用
   if (
     (isWeeklyDrought() || health.weeklyUnknown) &&
-    health.daily > AUTO_SWITCH_THRESHOLD
+    health.daily > _getAutoSwitchThreshold()
   )
     return true;
   // Daily耗尽但即将重置 + Weekly充足 → 仍可用(等重置)
   if (
-    health.daily <= AUTO_SWITCH_THRESHOLD &&
-    effectiveW > AUTO_SWITCH_THRESHOLD
+    health.daily <= _getAutoSwitchThreshold() &&
+    effectiveW > _getAutoSwitchThreshold()
   ) {
-    if (hoursUntilDailyReset() <= WAIT_RESET_HOURS) return true;
+    if (hoursUntilDailyReset() <= _getWaitResetHours()) return true;
   }
   // Daily耗尽但即将重置 + 干旱模式 → 等重置
   if (
     (isWeeklyDrought() || health.weeklyUnknown) &&
-    health.daily <= AUTO_SWITCH_THRESHOLD &&
-    hoursUntilDailyReset() <= WAIT_RESET_HOURS
+    health.daily <= _getAutoSwitchThreshold() &&
+    hoursUntilDailyReset() <= _getWaitResetHours()
   )
     return true;
   return false;
@@ -379,10 +977,14 @@ function isWamMode() {
 //   4. 清除内存+磁盘状态
 //   5. 清除代理环境变量
 async function cleanupThirdPartyState() {
-  const appdata = process.env.APPDATA || "";
+  // 动态使用DATA_DIR而非硬编码产品名
   const cleanFiles = [
-    path.join(appdata, "Windsurf", "_fp_salt.txt"),
-    path.join(appdata, "Windsurf", "_pool_apikey.txt"),
+    ...(DATA_DIR
+      ? [
+          path.join(DATA_DIR, "_fp_salt.txt"),
+          path.join(DATA_DIR, "_pool_apikey.txt"),
+        ]
+      : []),
     path.join(WAM_DIR, "oneshot_token.json"),
     path.join(WAM_DIR, "inject_result.json"),
   ];
@@ -403,7 +1005,7 @@ async function cleanupThirdPartyState() {
     log("cleanup: windsurf.logout — 登出WAM会话");
     await Promise.race([
       vscode.commands.executeCommand("windsurf.logout"),
-      new Promise((r) => setTimeout(r, 8000)),
+      new Promise((r) => setTimeout(r, _getLogoutTimeoutMs())),
     ]);
     cleaned++;
     log("cleanup: logout OK");
@@ -465,17 +1067,15 @@ async function cleanupThirdPartyState() {
   _consecutiveChanges = 0;
   _predictiveCandidate = -1;
   _prewarmedToken = null; // v8: 清除预热Token
-  // 清除旧版本可能设置的代理环境变量污染
-  // 注: 仅清除WAM设置的值(127.0.0.1:7890), 不动用户自己设的代理
-  if (process.env.HTTP_PROXY === "http://127.0.0.1:7890") {
-    delete process.env.HTTP_PROXY;
-    cleaned++;
-    log("cleanup: removed HTTP_PROXY");
-  }
-  if (process.env.HTTPS_PROXY === "http://127.0.0.1:7890") {
-    delete process.env.HTTPS_PROXY;
-    cleaned++;
-    log("cleanup: removed HTTPS_PROXY");
+  // v15.2: 清除旧版本可能设置的代理环境变量污染 — 唯变所适
+  // 不再硬编码单一地址, 而是检测所有WAM可能设过的localhost代理值
+  for (const envKey of ["HTTP_PROXY", "HTTPS_PROXY"]) {
+    const val = process.env[envKey];
+    if (val && /^https?:\/\/127\.0\.0\.1:\d+\/?$/.test(val)) {
+      delete process.env[envKey];
+      cleaned++;
+      log(`cleanup: removed ${envKey}=${val}`);
+    }
   }
   log(
     `cleanup: ${cleaned} items cleaned, engines+heartbeat+watcher stopped, session logged out — 回归本源`,
@@ -495,7 +1095,7 @@ function _restartBackgroundServices() {
           : null;
       _writeInstanceClaim(activeAcc?.email || "");
       _cleanDeadInstances();
-    }, INSTANCE_HEARTBEAT_MS);
+    }, _getInstanceHeartbeatMs());
   }
   log("services restarted: watcher + heartbeat");
 }
@@ -506,13 +1106,16 @@ function _restartBackgroundServices() {
 class AccountStore {
   constructor(globalStoragePath) {
     this._dir = globalStoragePath;
-    this._path = path.join(globalStoragePath, "windsurf-login-accounts.json");
+    // 动态文件名: 基于产品名, 兼容windsurf旧文件
+    const accountFile = `${PRODUCT_NAME.toLowerCase()}-login-accounts.json`;
+    this._path = path.join(globalStoragePath, accountFile);
     // 共享路径: 让pool_engine等外部工具也能读到
-    this._sharedPath = path.join(
-      globalStoragePath,
-      "..",
-      "windsurf-login-accounts.json",
-    );
+    this._sharedPath = path.join(globalStoragePath, "..", accountFile);
+    // 兼容旧文件名 (windsurf-login-accounts.json)
+    this._legacyPath =
+      PRODUCT_NAME.toLowerCase() !== "windsurf"
+        ? path.join(globalStoragePath, "windsurf-login-accounts.json")
+        : null;
     this.accounts = [];
     this.switchCount = 0;
     this.activeIndex = -1;
@@ -524,7 +1127,18 @@ class AccountStore {
   load() {
     const candidates = [
       this._path,
-      path.join(this._dir, "..", "windsurf-login-accounts.json"),
+      path.join(
+        this._dir,
+        "..",
+        `${PRODUCT_NAME.toLowerCase()}-login-accounts.json`,
+      ),
+      // 兼容旧文件名
+      ...(this._legacyPath
+        ? [
+            this._legacyPath,
+            path.join(this._dir, "..", "windsurf-login-accounts.json"),
+          ]
+        : []),
     ];
     // 黑名单: 读取归档池中的死号,防止从其他路径被重新合并
     const blacklist = new Set();
@@ -622,25 +1236,153 @@ class AccountStore {
       this.save();
       log("store: format migration persisted");
     }
-    // v10.2: 迁移逻辑已移除 — W=D=100是合法新账号, 不应清洗
-    // 修复在_extractQuotaFields: proto3 absent field 15 = 0, 无需迁移存量数据
-    // API scan会自然刷新所有账号的真实D/W值
+    // v17.8 道法自然 · 返本归真: 清理 v17.7 历史假数据 (磁盘污染自愈)
+    //   识别特征: _authSystem='devin' 且 usage.plan='Devin' (大写 D · v17.7 软编码指纹)
+    //   Codeium 真实 API 返回的是 Trial/Pro/Free 等小写, 不会出现大写 'Devin'
+    //   清理后: 还原未验自然态, 真实数据由 fetchAccountQuota (内建 Firebase→Devin fallback) 按需补齐
+    let _cleaned = 0;
+    for (const a of this.accounts) {
+      if (
+        a &&
+        a._authSystem === "devin" &&
+        a.usage &&
+        a.usage.plan === "Devin" // v17.7 软编码特征: 首字母大写 "Devin"
+      ) {
+        // 清除假数据 · 保留 _authSystem + _devinVerified + _lastVerified 等身份字段
+        delete a.usage.daily;
+        delete a.usage.weekly;
+        delete a.usage.plan;
+        delete a.usage.planEnd;
+        delete a.usage.resetTime;
+        delete a.usage.weeklyReset;
+        delete a.usage.lastChecked;
+        if (Object.keys(a.usage).length === 0) delete a.usage;
+        _cleaned++;
+      }
+    }
+    if (_cleaned > 0) {
+      this.save();
+      log(
+        `store: v17.8 道法自然 — 清理 ${_cleaned} 个 Devin 账号 v17.7 假 plan="Devin" 数据`,
+      );
+    }
   }
 
   save() {
+    // v16.1: 保存前合并磁盘数据 — 保留pipeline注入的apiKey和新增账号
+    this._mergeFromDisk();
     const json = JSON.stringify(this.accounts, null, 2);
     // 自动备份: 保存前先备份现有文件 (保留最近3个备份)
     this._autoBackup();
+    // v17.3 道法自然: save 错误不可再静默, 否则内存与磁盘背离无从察觉
+    //   反者道之动: 错误必见光, 见光才能修
+    let primaryErr = null,
+      sharedErr = null;
     try {
       fs.mkdirSync(path.dirname(this._path), { recursive: true });
       fs.writeFileSync(this._path, json, "utf8");
     } catch (e) {
-      log(`store save error: ${e.message}`);
+      primaryErr = e;
+      log(
+        `store save error [primary=${this._path}]: ${e.code || ""} ${e.message}`,
+      );
     }
     // 同步写入共享位置 (让pool_engine等外部工具也能读到)
     try {
       if (this._sharedPath) fs.writeFileSync(this._sharedPath, json, "utf8");
+    } catch (e) {
+      sharedErr = e;
+      log(
+        `store save error [shared=${this._sharedPath}]: ${e.code || ""} ${e.message}`,
+      );
+    }
+    // v17.3: 双通道同时失败才告警 (避免噪音), 且每 5 分钟最多 1 次
+    if (primaryErr && sharedErr) {
+      const now = Date.now();
+      if (
+        !this._lastSaveErrNotify ||
+        now - this._lastSaveErrNotify > 5 * 60 * 1000
+      ) {
+        this._lastSaveErrNotify = now;
+        vscode.window
+          .showErrorMessage(
+            `WAM 写盘失败! primary=${primaryErr.code || primaryErr.message}, shared=${sharedErr.code || sharedErr.message}. 内存池将在重启后丢失.`,
+            "查看日志",
+            "打开目录",
+          )
+          .then((choice) => {
+            if (choice === "查看日志") {
+              vscode.workspace
+                .openTextDocument(vscode.Uri.file(LOG_FILE))
+                .then((doc) => vscode.window.showTextDocument(doc))
+                .then(undefined, () => {});
+            } else if (choice === "打开目录") {
+              vscode.env.openExternal(
+                vscode.Uri.file(path.dirname(this._path)),
+              );
+            }
+          });
+      }
+    }
+  }
+
+  _mergeFromDisk() {
+    // 读取磁盘上的共享池文件, 合并pipeline注入的apiKey和新增账号
+    const candidates = [this._sharedPath, this._path].filter(Boolean);
+    // 道法自然: 归档黑名单 — 防止purged账号从共享文件回流 (根因修复)
+    const purgedBlacklist = new Set();
+    try {
+      const archPath = path.join(path.dirname(this._path), "_wam_purged.json");
+      if (fs.existsSync(archPath)) {
+        const arch = JSON.parse(fs.readFileSync(archPath, "utf8"));
+        if (Array.isArray(arch))
+          arch.forEach((a) => {
+            if (a.email) purgedBlacklist.add(a.email.toLowerCase());
+          });
+      }
     } catch {}
+    const memMap = new Map();
+    for (const a of this.accounts) {
+      if (a.email) memMap.set(a.email.toLowerCase(), a);
+    }
+    let merged = 0,
+      added = 0;
+    for (const p of candidates) {
+      try {
+        if (!fs.existsSync(p)) continue;
+        const disk = JSON.parse(fs.readFileSync(p, "utf8"));
+        if (!Array.isArray(disk)) continue;
+        for (const da of disk) {
+          const e = (da.email || "").toLowerCase();
+          if (!e || !da.password) continue;
+          if (purgedBlacklist.has(e)) continue; // 黑名单: 不回流已归档死号
+          // Free plan门控: 缓存plan=free → 不回流 (与load()一致)
+          if (((da.usage && da.usage.plan) || "").toLowerCase() === "free")
+            continue;
+          const mem = memMap.get(e);
+          if (mem) {
+            // 合并apiKey: 磁盘有而内存无 → 补充
+            if (da.apiKey && !mem.apiKey) {
+              mem.apiKey = da.apiKey;
+              merged++;
+            }
+            // 合并password: 磁盘有而内存无 → 补充
+            if (da.password && !mem.password) {
+              mem.password = da.password;
+              merged++;
+            }
+          } else {
+            // 磁盘有而内存无 → 新增
+            this.accounts.push(da);
+            memMap.set(e, da);
+            added++;
+          }
+        }
+      } catch {}
+    }
+    if (merged > 0 || added > 0) {
+      log(`store: disk merge +${added} new, ${merged} fields synced`);
+    }
   }
 
   _autoBackup() {
@@ -674,10 +1416,23 @@ class AccountStore {
   }
 
   add(email, password) {
+    // v17.4 根因修复: 单路(parseBatch) + 双路(API/命令直呼) 都经过 add,
+    // 在这里再净化一次做防御 (反者道之动·不信调用方). 同时记录伪装指纹.
+    const rawEmailHex = _hexFingerprint(email);
+    const rawPwHex = _hexFingerprint(password);
+    email = _sanitizeCredential(email);
+    password = _sanitizeCredential(password);
+    const cleanPwHex = _hexFingerprint(password);
+    if (rawPwHex !== cleanPwHex) {
+      log(
+        `sanitize: ${email} — 密码伪装字符命中! raw[${rawPwHex}] → clean[${cleanPwHex}]`,
+      );
+    }
     // 清洗: 去掉email末尾分隔符残留, 去掉password首尾空格
     email = email.replace(/[-=|:,\s]+$/, "").trim();
     password = (password || "").trim();
     if (!email || !email.includes("@") || !password) return false;
+    void rawEmailHex; // reserved for future forensic (避免 lint warning)
     if (
       this.accounts.some(
         (a) => (a.email || "").toLowerCase() === email.toLowerCase(),
@@ -711,18 +1466,12 @@ class AccountStore {
         const plan = (quota.planName || "").toLowerCase();
         const planEnd = quota.planEndUnix ? quota.planEndUnix * 1000 : 0;
         const isExpired = planEnd > 0 && Date.now() > planEnd;
-        // Free plan(D0/W0) 或 试用过期且D0/W0 → 拒绝; 有配额的保留
-        if (
-          (plan === "free" && quota.daily === 0 && quota.weekly === 0) ||
-          (isExpired &&
-            isTrialPlan(plan) &&
-            quota.daily === 0 &&
-            quota.weekly === 0)
-        ) {
+        // v16根因修复: Free plan无论配额多少均拒绝; 试用过期无论配额多少均拒绝
+        if (plan === "free" || (isExpired && isTrialPlan(plan))) {
           const reason =
             plan === "free"
               ? `verify_gate_free: plan=free, D${quota.daily}W${quota.weekly}仅限免费模型, Claude不可用`
-              : `verify_gate_expired: plan=${plan}已过期, Claude不可用`;
+              : `verify_gate_expired: plan=${plan}过期, D${quota.daily}W${quota.weekly}, Claude不可用`;
           log(`verify-gate: ${email} → 拒绝 (${reason})`);
           this._archiveRemoved([this.accounts[idx]], reason);
           this.accounts.splice(idx, 1);
@@ -743,23 +1492,81 @@ class AccountStore {
           `verify-gate: ${email} → 通过 (plan=${plan}, D${quota.daily}W${quota.weekly})`,
         );
       } else {
+        // v17.4 取证: 失败时印密码 hex 指纹 (便于排查是否仍有伪装字符漏网)
+        // 只印前后 12 字节, 不泄露完整密码. 只要 hex 与用户贴入时一致 → Firebase 端真的密码错
+        const pwFp = _hexFingerprint(password);
         log(
-          `verify-gate: ${email} → 探测失败: ${quota.error} (保留, 等待下次purge)`,
+          `verify-gate: ${email} → 探测失败: ${quota.error} (pwFp=${pwFp} len=${password.length}B, 保留等待下次purge)`,
         );
-        // 登录永久失败 → 立即清除
+        // v17.3 道法自然: 登录失败不再立即归档死号, 仅标记+告警
+        // 反者道之动: Firebase INVALID_LOGIN 可能源于网络抖动·密码暂不同步·Key限流
+        //   之前"秒归档+黑名单"让无辜账号永久殉葬, 违反"无为而无不为"
+        //   改为: 标记 _verifyFailed, 用户可自主重试; 真死号留给 purge 批量二次确认
         if (/INVALID|NOT_FOUND|DISABLED|WRONG/.test(quota.error || "")) {
-          log(`verify-gate: ${email} → 登录死号, 归档移除`);
-          this._archiveRemoved(
-            [this.accounts[idx]],
-            `verify_gate_dead: ${quota.error}`,
+          // v17.5 道法自然: Firebase INVALID → 探测是否 Devin-only 账号
+          // 成功 → 标记 _authSystem='devin', 重置失败计数, 保护账号不被归档/拉黑
+          const devinCheck = await _devinLogin(email, password);
+          if (devinCheck.ok) {
+            log(
+              `verify-gate: ${email} → Firebase INVALID 但 Devin 登录成功 (auth1=${(devinCheck.auth1Token || "").slice(0, 20)}..., uid=${devinCheck.userId}) — 标记 Devin-only 账号, 保护不归档`,
+            );
+            this.accounts[idx]._authSystem = "devin";
+            this.accounts[idx]._devinUserId = devinCheck.userId;
+            this.accounts[idx]._devinDetectedAt = Date.now();
+            // v17.5 补完+: 打验证标记, 供 getHealth/getBestIndex/UI 识别
+            this.accounts[idx]._devinVerified = true;
+            this.accounts[idx]._lastVerified = Date.now();
+            delete this.accounts[idx]._verifyFailed;
+            delete this.accounts[idx]._verifyFailedAt;
+            this.accounts[idx]._verifyFailedCount = 0;
+            delete this.accounts[idx]._unverified;
+            this.save();
+            // v17.8 道法自然: 触发 fetchAccountQuota — Devin fallback 自动拿真实 plan
+            //   fire-and-forget · cooldown 防重复 · 与 scan/purge 共享路径
+            fetchAccountQuota(email, password)
+              .then((q) => {
+                if (q.ok) {
+                  try {
+                    this.save();
+                    refreshAll();
+                  } catch {}
+                }
+              })
+              .catch(() => {});
+            vscode.window.showInformationMessage(
+              `WAM: ${email} 识别为 Devin-only 账号 — 已保护 (真实 Plan 后台获取中)`,
+            );
+            refreshAll();
+            return;
+          }
+          log(
+            `verify-gate: ${email} → 登录失败(${quota.error}), 标记 _verifyFailed 保留池中可重试`,
           );
-          this.accounts.splice(idx, 1);
-          if (this.activeIndex === idx) this.activeIndex = -1;
-          else if (this.activeIndex > idx) this.activeIndex--;
+          this.accounts[idx]._verifyFailed = quota.error;
+          this.accounts[idx]._verifyFailedAt = Date.now();
+          this.accounts[idx]._verifyFailedCount =
+            (this.accounts[idx]._verifyFailedCount || 0) + 1;
+          // 连续 3 次失败才归档 (给 3 次机会: 网络抖动/代理切换/Firebase 恢复)
+          if (this.accounts[idx]._verifyFailedCount >= 3) {
+            log(
+              `verify-gate: ${email} → 连续${this.accounts[idx]._verifyFailedCount}次失败, 归档`,
+            );
+            this._archiveRemoved(
+              [this.accounts[idx]],
+              `verify_gate_dead_after_retries: ${quota.error}`,
+            );
+            this.accounts.splice(idx, 1);
+            if (this.activeIndex === idx) this.activeIndex = -1;
+            else if (this.activeIndex > idx) this.activeIndex--;
+            vscode.window.showWarningMessage(
+              `WAM: 已拒绝 ${email} — 登录失败连续3次(${quota.error})`,
+            );
+          } else {
+            vscode.window.showWarningMessage(
+              `WAM: ${email} 验证失败 ${this.accounts[idx]._verifyFailedCount}/3 (${quota.error}) — 保留池中可重试`,
+            );
+          }
           this.save();
-          vscode.window.showWarningMessage(
-            `WAM: 已拒绝 ${email} — 登录失败(${quota.error})`,
-          );
           refreshAll();
         }
       }
@@ -845,6 +1652,8 @@ class AccountStore {
   }
 
   _parseLine(line) {
+    // 入口先净化: NFKC 全角→半角 + 剔零宽. 聊天软件/IME 污染到此为止.
+    line = _sanitizeCredential(line);
     line = line
       .replace(/^\uFEFF/, "")
       .replace(/^["']+|["']+$/g, "")
@@ -905,11 +1714,17 @@ class AccountStore {
   getHealth(acc) {
     const u = acc.usage || {};
     const snap = _quotaSnapshots.get((acc.email || "").toLowerCase());
+    // v17.5 补完: Devin 账号经 _devinFullSwitch 验证后视为已验证
+    const _devinChecked =
+      acc._authSystem === "devin" &&
+      (acc._devinVerified || acc._lastVerified > 0);
     const checked =
       !!(
         acc.usage &&
         (acc.usage.daily || acc.usage.lastChecked || acc.loginCount > 0)
-      ) || !!snap;
+      ) ||
+      !!snap ||
+      _devinChecked;
     // v7.2: 兼容两种格式 — usage.daily 可能是数字(82)或对象({remaining:82})
     const _readQuota = (field) => {
       if (field == null) return undefined;
@@ -938,6 +1753,9 @@ class AccountStore {
     } else {
       wr = storedW;
     }
+    // v17.8 道法自然 · 返本归真: plan 完全来自 u.plan (真实 Firebase/Codeium 数据)
+    //   反者道之动: v17.5+ 强给 "Devin" 是造假, 真实 Devin 账号官方 plan 是 Trial/Pro/Free 等
+    //   未验账号显示空 plan (不假装 "Trial"), 触发 UI 显示未验徽章
     const plan = u.plan || (checked ? "Trial" : "");
     const planEnd = u.planEnd || 0;
     const resetTime = u.resetTime || 0;
@@ -952,6 +1770,9 @@ class AccountStore {
       resetTime > now ? Math.round((resetTime - now) / 1000) : 0;
     const weeklyResetIn =
       weeklyReset > now ? Math.round((weeklyReset - now) / 1000) : 0;
+    // v17.8 道法自然: getHealth 纯映射真实数据 · 不再虚造 _devin/_devinPerpetual 标志
+    //   Devin 账号与普通账号同构 → 前端零分支判断
+    //   身份识别仅留在后端 (acc._authSystem), 不泄漏到前端 Health 结构
     return {
       checked,
       daily: dr,
@@ -988,11 +1809,13 @@ class AccountStore {
         unchecked++;
         continue;
       }
+      // v17.8 道法自然: Devin 账号走真实数据 (fetchAccountQuota 补齐后) 与普通账号同轨
+      //   无独立 available_devin 计数 — 有配额归 available, 无配额归 exhausted/waiting, 与普通账号一致
       totalD += h.daily;
       totalW += h.weekly;
       if (!isClaudeAvailable(h)) exhausted++;
       else if (isAccountSwitchable(h)) available++;
-      else if (drought ? h.daily <= AUTO_SWITCH_THRESHOLD : h.weekly <= 2)
+      else if (drought ? h.daily <= _getAutoSwitchThreshold() : h.weekly <= 2)
         exhausted++;
       else waiting++;
     }
@@ -1026,7 +1849,7 @@ class AccountStore {
     };
   }
 
-  // 标记使用中 — 消息锚定: 单次波动即刻标记, 冷却INUSE_COOLDOWN_MS后清除 (持久化)
+  // 标记使用中 — 消息锚定: 单次波动即刻标记, 冷却_getInuseCooldownMs()后清除 (持久化)
   markInUse(email) {
     const key = email.toLowerCase();
     const now = Date.now();
@@ -1045,7 +1868,7 @@ class AccountStore {
     const now = Date.now();
     let cleaned = false;
     for (const [email, info] of this._inUse) {
-      if (now - info.lastChange > INUSE_COOLDOWN_MS) {
+      if (now - info.lastChange > _getInuseCooldownMs()) {
         this._inUse.delete(email);
         cleaned = true;
       }
@@ -1066,7 +1889,7 @@ class AccountStore {
   getInUseCooldown(email) {
     const info = this._inUse.get(email.toLowerCase());
     if (!info) return 0;
-    const remaining = INUSE_COOLDOWN_MS - (Date.now() - info.lastChange);
+    const remaining = _getInuseCooldownMs() - (Date.now() - info.lastChange);
     return remaining > 0 ? Math.ceil(remaining / 1000) : 0;
   }
 
@@ -1082,7 +1905,7 @@ class AccountStore {
     const info = this._inUse.get(key);
     if (!info) return 0;
     const elapsed = Date.now() - info.lastChange;
-    if (elapsed > INUSE_COOLDOWN_MS) return 0;
+    if (elapsed > _getInuseCooldownMs()) return 0;
     if (elapsed < 10000) return 3;
     if (elapsed < 30000) return 2;
     return 1;
@@ -1099,7 +1922,8 @@ class AccountStore {
       if (i === excludeIndex) continue;
       const a = this.accounts[i];
       if (!a.password) continue;
-      if (a._unverified) continue; // Claude可用性未验证 → 不参与切号
+      if (a._unverified && !(a._authSystem === "devin" && a._devinVerified))
+        continue; // Claude可用性未验证 → 不参与切号 (Devin已验证账号跳过)
       if (a.skipAutoSwitch) continue; // 用户手动锁定 → 自动切号不选此号
       if (skipInUse && this.isInUse(a.email)) continue;
       if (_isClaimedByOther(a.email)) continue; // 跨实例协调: 跳过被其他存活实例占用的账号
@@ -1109,8 +1933,8 @@ class AccountStore {
       const streak = _poolFailStreak.get(ek);
       if (
         streak &&
-        streak.count >= POOL_TEMP_BAN_THRESHOLD &&
-        Date.now() - streak.lastFail < POOL_TEMP_BAN_DURATION
+        streak.count >= _getPoolTempBanThreshold() &&
+        Date.now() - streak.lastFail < _getPoolTempBanDuration()
       )
         continue;
       const h = this.getHealth(a);
@@ -1123,6 +1947,10 @@ class AccountStore {
       const tokenBonus = hasWarmToken ? 500 : 0;
       // pool连续失败降分 (未达拉黑阈值但有失败记录)
       const failPenalty = streak && streak.count > 0 ? streak.count * 150 : 0;
+
+      // v17.8 道法自然: 无 Devin 独立评分 — 所有账号统一按 D/W 配额评分 (eff*10 + W*8 + D*3 + 新鲜度 + tokenBonus - failPenalty)
+      //   Devin 账号数据来源: fetchAccountQuota Firebase→Devin fallback 补齐真实 plan/quota
+      //   Fallback 失败 → D/W=0 → 自然 continue · 不参与自动切号 (手动切号独立走 _devinFullSwitch 通道)
 
       // v9.3: weeklyUnknown时走干旱模式逻辑(只看daily)
       if (drought || h.weeklyUnknown) {
@@ -1206,18 +2034,17 @@ function _readInstanceClaims() {
 // v14.3.1: claims缓存 — getBestIndex每个账号都调用_isClaimedByOther, 50号=50次readFileSync
 // 缓存5秒TTL, 将N次磁盘读降为1次
 let _claimsCache = { data: null, ts: 0 };
-const CLAIMS_CACHE_TTL = 5000;
 
 function _isClaimedByOther(email) {
   const now = Date.now();
-  if (!_claimsCache.data || now - _claimsCache.ts > CLAIMS_CACHE_TTL) {
+  if (!_claimsCache.data || now - _claimsCache.ts > _getClaimsCacheTtl()) {
     _claimsCache = { data: _readInstanceClaims(), ts: now };
   }
   const claims = _claimsCache.data;
   const key = email.toLowerCase();
   for (const [instId, claim] of Object.entries(claims)) {
     if (instId === _instanceId) continue;
-    if (now - claim.ts > INSTANCE_DEAD_MS) continue;
+    if (now - claim.ts > _getInstanceDeadMs()) continue;
     if (claim.email === key) return true;
   }
   return false;
@@ -1229,7 +2056,7 @@ function _cleanDeadInstances() {
     const now = Date.now();
     let changed = false;
     for (const [instId, claim] of Object.entries(claims)) {
-      if (now - claim.ts > INSTANCE_DEAD_MS) {
+      if (now - claim.ts > _getInstanceDeadMs()) {
         delete claims[instId];
         changed = true;
         log(
@@ -1250,8 +2077,25 @@ function _cleanDeadInstances() {
 // 认证引擎 v4 — 纯Node.js · 多通道并行竞速 · 零外部依赖
 // ============================================================
 
-// ── 基础HTTPS请求 ──
+// ── 基础HTTPS请求 — v15.2: 自动感知系统代理 ──
+// 道可道非常道: 固定direct=死路, 自适应代理=活路
+// 当系统配置了代理(env/vscode/registry)时, 自动通过代理发送
+// 否则直连 (适合可直通Google Cloud的网络)
 function _httpsPost(url, body, opts = {}) {
+  // v15.2: 如果系统有代理且caller没明确指定hostname → 自动走代理
+  if (!opts.hostname && !opts._skipAutoProxy) {
+    const sysProxy = _getSystemProxy();
+    if (sysProxy) {
+      return _httpsViaProxy(
+        sysProxy.host,
+        sysProxy.port,
+        url,
+        body,
+        opts.timeout || 12000,
+        opts.headers || {},
+      );
+    }
+  }
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
     const reqOpts = {
@@ -1292,7 +2136,7 @@ function _httpsPost(url, body, opts = {}) {
   });
 }
 
-// ── 通过HTTP代理发送HTTPS请求 (CONNECT隧道 + 显式tls.connect — 根治Electron socket传递问题) ──
+// ── 通过HTTP代理发送HTTPS请求 (CONNECT隧道 + https.request自动处理chunked) ──
 function _httpsViaProxy(
   proxyHost,
   proxyPort,
@@ -1303,15 +2147,8 @@ function _httpsViaProxy(
 ) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(targetUrl);
-    let settled = false;
-    const settle = (fn, val) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      fn(val);
-    };
     const timer = setTimeout(() => {
-      settle(reject, new Error("proxy_timeout"));
+      reject(new Error("proxy_timeout"));
     }, timeout);
     const connReq = http.request({
       host: proxyHost,
@@ -1322,78 +2159,74 @@ function _httpsViaProxy(
     });
     connReq.on("connect", (res, socket) => {
       if (res.statusCode !== 200) {
+        clearTimeout(timer);
         socket.destroy();
-        settle(reject, new Error(`proxy_connect_${res.statusCode}`));
+        reject(new Error(`proxy_connect_${res.statusCode}`));
         return;
       }
-      // v15.1: 显式TLS握手 — 不依赖https.request({socket})在Electron中的行为
-      // 旧版: https.request({socket}) 假定Node.js会将socket传给tls.connect
-      // 新版: 手动tls.connect({socket}) → 确保TLS在CONNECT隧道上正确建立
-      const tlsSock = tls.connect({
-        socket: socket,
-        servername: parsed.hostname,
-        rejectUnauthorized: false,
-      });
-      tlsSock.on("error", (e) => {
-        settle(reject, new Error(`tls_error: ${e.message}`));
-      });
-      tlsSock.on("secureConnect", () => {
-        // TLS握手成功 → 通过http.request发送请求 (TLS已由tlsSock处理)
-        const req = http.request(
-          {
-            createConnection: () => tlsSock,
-            hostname: parsed.hostname,
-            path: parsed.pathname + parsed.search,
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Content-Length": Buffer.byteLength(body),
-              Host: parsed.hostname,
-              ...extraHeaders,
-            },
-            timeout: timeout - 3000,
+      // 用https.request接管已建立的CONNECT隧道socket，自动处理chunked/gzip
+      const req = https.request(
+        {
+          socket, // 复用CONNECT隧道
+          hostname: parsed.hostname,
+          path: parsed.pathname + parsed.search,
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Content-Length": Buffer.byteLength(body),
+            Host: parsed.hostname,
+            ...extraHeaders,
           },
-          (resp) => {
-            let data = "";
-            resp.on("data", (c) => (data += c));
-            resp.on("end", () => {
-              try {
-                settle(resolve, JSON.parse(data));
-              } catch {
-                settle(resolve, { _raw: data, _status: resp.statusCode });
-              }
-            });
-          },
-        );
-        req.on("error", (e) => {
-          settle(reject, new Error(`req_error: ${e.message}`));
-        });
-        req.on("timeout", () => {
-          req.destroy();
-          settle(reject, new Error("req_timeout"));
-        });
-        req.write(body);
-        req.end();
+          servername: parsed.hostname,
+          rejectUnauthorized: false,
+          timeout: timeout - 2000,
+        },
+        (resp) => {
+          let data = "";
+          resp.on("data", (c) => (data += c));
+          resp.on("end", () => {
+            clearTimeout(timer);
+            try {
+              resolve(JSON.parse(data));
+            } catch {
+              resolve({ _raw: data, _status: resp.statusCode });
+            }
+          });
+        },
+      );
+      req.on("error", (e) => {
+        clearTimeout(timer);
+        reject(e);
       });
+      req.on("timeout", () => {
+        clearTimeout(timer);
+        req.destroy();
+        reject(new Error("req_timeout"));
+      });
+      req.write(body);
+      req.end();
     });
     connReq.on("error", (e) => {
-      settle(reject, new Error(`conn_error: ${e.message}`));
+      clearTimeout(timer);
+      reject(e);
     });
     connReq.on("timeout", () => {
+      clearTimeout(timer);
       connReq.destroy();
-      settle(reject, new Error("proxy_conn_timeout"));
+      reject(new Error("proxy_conn_timeout"));
     });
     connReq.end();
   });
 }
 
-// ── 探测代理端口 (v10.0: CONNECT功能验证 + LAN代理自适应 — 杜绝假代理) ──
-let _proxyPortCache = null;
-let _proxyHostCache = PROXY_HOST; // v14.0: 跟踪验证通过的代理Host
-let _proxyPortCacheTs = 0;
-const PROXY_CACHE_TTL = 300000; // 5分钟 TTL
-const PROXY_FAIL_TTL = 30000; // 失败缓存30秒 (不反复锤死端口)
-let _proxyVerifyInProgress = false;
+// ── v16.0: 统一代理描述符 — 万法归宗·从根本去除端口依赖 ──
+// 旧版: _proxyPortCache(端口号) + _proxyHostCache(主机名) 双全局 → 隐式耦合·易出错
+// 新版: 单一 _proxyCache 描述符 {host, port, source} | null → 自洽·无歧义
+let _proxyCache = null; // {host, port, source} | null — 验证通过的代理
+let _proxyCacheTs = 0;
+// PROXY_CACHE_TTL / PROXY_FAIL_TTL → _getProxyCacheTtl() / _getProxyFailTtl() (v17.1 getter化)
+let _proxyDetectPromise = null; // v16.1: 共享Promise — 并发调用方等待同一次检测, 不再返回null
+const _PROXY_NOT_FOUND = Symbol("no_proxy"); // 区分"未检测"(null)和"检测过无结果"
 
 // 功能验证: 不仅TCP连通, 还要CONNECT隧道能打通Google
 function _verifyProxyPort(host, port) {
@@ -1405,7 +2238,7 @@ function _verifyProxyPort(host, port) {
       host,
       port,
       method: "CONNECT",
-      path: `${FIREBASE_HOST}:443`,
+      path: `${_getFirebaseHost()}:443`,
       timeout: 1500,
     });
     connReq.on("connect", (res, socket) => {
@@ -1502,42 +2335,124 @@ function _getSystemProxy() {
   return null;
 }
 
+// v15.2: 动态发现默认网关 — 唯变所适·道法自然
+// 企业/VPN/家庭环境中, 代理可能运行在网关而非localhost
+function _detectDefaultGateway() {
+  try {
+    const interfaces = os.networkInterfaces();
+    for (const [, addrs] of Object.entries(interfaces)) {
+      for (const addr of addrs) {
+        if (addr.family === "IPv4" && !addr.internal && addr.address) {
+          // 根据IP地址推断网关 (常见模式: x.x.x.1)
+          const parts = addr.address.split(".");
+          if (parts.length === 4) {
+            return `${parts[0]}.${parts[1]}.${parts[2]}.1`;
+          }
+        }
+      }
+    }
+  } catch {}
+  // Windows: 尝试从route命令获取网关
+  if (process.platform === "win32") {
+    try {
+      const { execSync } = require("child_process");
+      const out = execSync("route print 0.0.0.0 2>nul", {
+        encoding: "utf8",
+        timeout: 2000,
+      });
+      const m = out.match(/0\.0\.0\.0\s+0\.0\.0\.0\s+(\d+\.\d+\.\d+\.\d+)/);
+      if (m) return m[1];
+    } catch {}
+  }
+  return null;
+}
+
+// v16.0: _detectProxy() 返回统一描述符 — 万法归宗·从根本去除端口依赖
+// 旧版: 返回 Promise<number> (端口号, 0=无代理) + 隐式_proxyHostCache全局
+// 新版: 返回 Promise<{host,port,source}|null> — 自洽, 无隐式状态, 调用方解构即用
 function _detectProxy() {
   const now = Date.now();
+  // 缓存命中: 返回已验证的描述符或null
   if (
-    _proxyPortCache !== null &&
-    now - _proxyPortCacheTs <
-      (_proxyPortCache > 0 ? PROXY_CACHE_TTL : PROXY_FAIL_TTL)
+    _proxyCache !== null &&
+    _proxyCache !== _PROXY_NOT_FOUND &&
+    now - _proxyCacheTs < _getProxyCacheTtl()
   )
-    return Promise.resolve(_proxyPortCache);
-  if (_proxyVerifyInProgress) return Promise.resolve(_proxyPortCache || 0);
-  _proxyVerifyInProgress = true;
-  _proxyPortCache = null;
+    return Promise.resolve(_proxyCache);
+  if (
+    _proxyCache === _PROXY_NOT_FOUND &&
+    now - _proxyCacheTs < _getProxyFailTtl()
+  )
+    return Promise.resolve(null);
+  // v16.1: 共享Promise — 并发调用方等待同一次检测结果, 不再返回null丢失代理
+  if (_proxyDetectPromise) return _proxyDetectPromise;
 
-  return new Promise(async (resolve) => {
-    // v14.0: 构建候选列表 — 系统代理优先 → 本地常见端口
+  _proxyDetectPromise = new Promise(async (resolve) => {
+    // v16.0: 构建候选列表 — 锚定本源·动态发现·零固定常量
+    // 优先级: 系统代理(env/vscode/registry) → localhost动态扫描 → LAN网关扫描
     const candidates = [];
+    const seen = new Set(); // 去重 host:port
+
+    // 层1: 系统代理 — 本源 (用户明确配置的代理, 最高优先)
     const sysProxy = _getSystemProxy();
     if (sysProxy) {
-      candidates.push({ host: sysProxy.host, port: sysProxy.port });
+      const key = `${sysProxy.host}:${sysProxy.port}`;
+      candidates.push({
+        host: sysProxy.host,
+        port: sysProxy.port,
+        source: sysProxy.source,
+      });
+      seen.add(key);
       log(
         `proxy: system proxy detected ${sysProxy.host}:${sysProxy.port} (${sysProxy.source})`,
       );
     }
-    for (const port of PROXY_PORTS) {
-      candidates.push({ host: PROXY_HOST, port });
+
+    // 层2: localhost动态端口扫描 — 末路兜底 (代理运行但未设系统代理)
+    for (const port of _getFallbackScanPorts()) {
+      const key = `127.0.0.1:${port}`;
+      if (!seen.has(key)) {
+        candidates.push({ host: "127.0.0.1", port, source: "scan" });
+        seen.add(key);
+      }
+    }
+
+    // 层3: LAN网关代理发现 — 道法自然·适应万物
+    // 企业/VPN/家庭环境代理可能运行在网关上 (路由器/专用代理服务器)
+    const gateway = _detectDefaultGateway();
+    if (gateway && gateway !== "127.0.0.1") {
+      for (const port of _getGatewayPorts()) {
+        const key = `${gateway}:${port}`;
+        if (!seen.has(key)) {
+          candidates.push({ host: gateway, port, source: `gw:${gateway}` });
+          seen.add(key);
+        }
+      }
+      log(`proxy: LAN gateway detected ${gateway} — adding scan candidates`);
+    }
+
+    if (candidates.length === 0) {
+      _proxyCache = _PROXY_NOT_FOUND;
+      _proxyCacheTs = Date.now();
+      _proxyDetectPromise = null;
+      resolve(null);
+      return;
     }
 
     // 并行TCP探测: 快速找到可连接的端口
     const alive = [];
     await new Promise((doneProbe) => {
       let pending = candidates.length;
-      for (const { host, port } of candidates) {
+      if (pending === 0) {
+        doneProbe();
+        return;
+      }
+      for (const c of candidates) {
         const s = new net.Socket();
         s.setTimeout(800);
-        s.connect(port, host, () => {
+        s.connect(c.port, c.host, () => {
           s.destroy();
-          alive.push({ host, port });
+          alive.push(c);
           if (--pending === 0) doneProbe();
         });
         s.on("error", () => {
@@ -1550,89 +2465,108 @@ function _detectProxy() {
         });
       }
     });
-    // v11: 并行CONNECT验证 — 所有alive端口同时验证, 第一个成功立即返回
-    // (旧版串行: N×3s=15s+ → 新版并行: max(2s)=2s)
+
+    // 并行CONNECT验证 — 所有alive端口同时验证, 第一个成功立即返回
     if (alive.length > 0) {
       try {
         const winner = await Promise.any(
-          alive.map(({ host, port }) =>
-            _verifyProxyPort(host, port).then((ok) => {
+          alive.map((c) =>
+            _verifyProxyPort(c.host, c.port).then((ok) => {
               if (!ok) throw new Error("verify_fail");
-              return { host, port };
+              return c;
             }),
           ),
         );
-        _proxyPortCache = winner.port;
-        _proxyHostCache = winner.host;
-        _proxyPortCacheTs = Date.now();
-        _proxyVerifyInProgress = false;
-        if (winner.host !== PROXY_HOST)
-          log(`proxy: ${winner.host}:${winner.port} verified ✓`);
-        resolve(winner.port);
+        _proxyCache = {
+          host: winner.host,
+          port: winner.port,
+          source: winner.source,
+        };
+        _proxyCacheTs = Date.now();
+        _proxyDetectPromise = null;
+        log(
+          `proxy: ${winner.host}:${winner.port} verified ✓ (${winner.source})`,
+        );
+        resolve(_proxyCache);
         return;
       } catch {
         // all CONNECT verify failed
       }
     }
     // 全部失败
-    _proxyPortCache = 0;
-    _proxyHostCache = PROXY_HOST;
-    _proxyPortCacheTs = Date.now();
-    _proxyVerifyInProgress = false;
-    resolve(0);
+    _proxyCache = _PROXY_NOT_FOUND;
+    _proxyCacheTs = Date.now();
+    _proxyDetectPromise = null;
+    resolve(null);
   });
+  return _proxyDetectPromise;
 }
 
 // 代理失效时强制刷新缓存 (被调用方在请求失败时调用)
 function _invalidateProxyCache() {
-  _proxyPortCache = null;
-  _proxyHostCache = PROXY_HOST;
-  _proxyPortCacheTs = 0;
+  _proxyCache = null;
+  _proxyCacheTs = 0;
+  _proxyDetectPromise = null;
 }
 
-// ── v15.1: Chromium原生网络桥 — 万法归宗·道法自然 ──
+// ── v15.1: Bridge就绪信号 + 自动确保 — 道法自然·有桥才走桥 ──
+// 根因修复: startup时webview不存在 → _nativeFetch全部no_webview → 所有native通道死
+// 修复策略:
+//   1. _onBridgeReady(): sidebar/editor创建时调用, 触发排队的回调
+//   2. _ensureBridgeWebview(): 如果sidebar未打开, 自动创建隐藏editor panel作为bridge
+//   3. _nativeFetch内部: no_webview时尝试auto-ensure, 而非直接reject
+function _onBridgeReady() {
+  if (_bridgeReady) return;
+  _bridgeReady = true;
+  log("bridge: Chromium网络桥就绪 — 万法归宗");
+  // 执行所有排队的回调
+  const cbs = _bridgeReadyCallbacks.splice(0);
+  for (const cb of cbs) {
+    try {
+      cb();
+    } catch (e) {
+      log(`bridge callback err: ${e.message}`);
+    }
+  }
+}
+
+function _ensureBridgeWebview() {
+  // 已有可用webview → 无需操作
+  if ((_sidebarProvider && _sidebarProvider._view) || _editorPanel) return;
+  // v16: 道法自然·真无感 — 不创建可见editor panel, 改为唤醒侧边栏
+  // 根因: createWebviewPanel必然创建可见标签页, preserveFocus只是不抢焦点
+  // 修复: 用sidebar做bridge, WebviewView不产生编辑器标签, 真正无感
+  try {
+    log("bridge: 唤醒侧边栏作为网络桥 (不创建editor panel)");
+    vscode.commands.executeCommand("wam.panel.focus");
+  } catch (e) {
+    log(`bridge: sidebar唤醒失败: ${e.message}`);
+  }
+}
+
+function _getActiveWebview() {
+  if (_sidebarProvider && _sidebarProvider._view)
+    return _sidebarProvider._view.webview;
+  if (_editorPanel) return _editorPanel.webview;
+  return null;
+}
+
+// ── v15: Chromium原生网络桥 — 万法归宗·道法自然 ──
 // 核心原理: Webview的fetch()运行在Chromium渲染进程, 自动继承:
 //   1. Windows注册表系统代理 (v2rayN/Clash等)
 //   2. PAC脚本自动代理配置
 //   3. Chromium DNS解析 (绕过Node.js DNS劫持)
 //   4. 与Windsurf官方登录完全相同的网络路径
 // 只要用户能用Windsurf → 此通道必然能到达Firebase/Codeium
-// v15.1: 侧边栏未打开时自动创建编辑器面板, 确保网络桥始终可用 (根治no_webview)
-let _bridgeReady = false; // 网络桥webview已就绪标记
-function _ensureWebview() {
-  if (_sidebarProvider && _sidebarProvider._view)
-    return _sidebarProvider._view.webview;
-  if (_editorPanel) return _editorPanel.webview;
-  // 侧边栏未打开 → 自动创建最小化编辑器面板作为网络桥
-  if (!_bridgeReady) {
-    try {
-      _editorPanel = vscode.window.createWebviewPanel(
-        "wam.editor",
-        "WAM",
-        { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
-        { enableScripts: true, retainContextWhenHidden: true },
-      );
-      _editorPanel.webview.html = buildHtml(_store);
-      _editorPanel.webview.onDidReceiveMessage(handleWebviewMessage);
-      _editorPanel.onDidDispose(() => {
-        _editorPanel = null;
-        _bridgeReady = false;
-      });
-      _bridgeReady = true;
-      log(
-        "native: auto-created editor panel as network bridge (sidebar not visible)",
-      );
-    } catch (e) {
-      log(`native: failed to create bridge panel: ${e.message}`);
-      return null;
-    }
-  }
-  return _editorPanel ? _editorPanel.webview : null;
-}
-
+// v15.1: no_webview时自动尝试_ensureBridgeWebview, 而非直接放弃
 function _nativeFetch(url, opts = {}) {
   return new Promise((resolve, reject) => {
-    const wv = _ensureWebview();
+    let wv = _getActiveWebview();
+    if (!wv) {
+      // v15.1: 自动确保bridge — 不再静默放弃
+      _ensureBridgeWebview();
+      wv = _getActiveWebview();
+    }
     if (!wv) {
       reject(new Error("no_webview"));
       return;
@@ -1674,8 +2608,23 @@ function _handleFetchResult(msg) {
   }
 }
 
-// ── Raw HTTPS POST (返回Buffer, 用于protobuf二进制响应) ──
+// ── Raw HTTPS POST (返回Buffer, 用于protobuf二进制响应) — v15.2: 自动感知系统代理 ──
+// v17.11: 入口采样 RTT/outcome → _adaptive 自动调节所有性能参数
 function _httpsPostRaw(url, body, opts = {}) {
+  // v15.2: 系统有代理且caller没指定hostname → 自动走代理 (道法自然)
+  if (!opts.hostname && !opts._skipAutoProxy) {
+    const sysProxy = _getSystemProxy();
+    if (sysProxy) {
+      return _httpsPostRawViaProxy(
+        sysProxy.host,
+        sysProxy.port,
+        url,
+        body,
+        opts.timeout || 12000,
+      );
+    }
+  }
+  const _startTs = Date.now();
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
     const reqOpts = {
@@ -1697,12 +2646,21 @@ function _httpsPostRaw(url, body, opts = {}) {
     const req = https.request(reqOpts, (res) => {
       const chunks = [];
       res.on("data", (c) => chunks.push(c));
-      res.on("end", () =>
-        resolve({ buf: Buffer.concat(chunks), status: res.statusCode }),
-      );
+      res.on("end", () => {
+        // v17.11 唯变所适: 2xx/3xx = success, 4xx/5xx/429 = outcome fail (RTT 仍计)
+        const rtt = Date.now() - _startTs;
+        const ok = res.statusCode >= 200 && res.statusCode < 400;
+        _adaptive.sampleRtt(rtt);
+        _adaptive.sampleOutcome(ok);
+        resolve({ buf: Buffer.concat(chunks), status: res.statusCode });
+      });
     });
-    req.on("error", reject);
+    req.on("error", (e) => {
+      _adaptive.sampleOutcome(false);
+      reject(e);
+    });
     req.on("timeout", () => {
+      _adaptive.sampleOutcome(false);
       req.destroy();
       reject(new Error("timeout"));
     });
@@ -1718,17 +2676,15 @@ function _httpsPostRawViaProxy(
   body,
   timeout = 12000,
 ) {
+  const _startTs = Date.now();
+  const _rej = (err) => {
+    _adaptive.sampleOutcome(false);
+    return err;
+  };
   return new Promise((resolve, reject) => {
     const parsed = new URL(targetUrl);
-    let settled = false;
-    const settle = (fn, val) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      fn(val);
-    };
     const timer = setTimeout(() => {
-      settle(reject, new Error("proxy_raw_timeout"));
+      reject(_rej(new Error("proxy_raw_timeout")));
     }, timeout);
     const connReq = http.request({
       host: proxyHost,
@@ -1739,62 +2695,61 @@ function _httpsPostRawViaProxy(
     });
     connReq.on("connect", (res, socket) => {
       if (res.statusCode !== 200) {
+        clearTimeout(timer);
         socket.destroy();
-        settle(reject, new Error(`proxy_connect_${res.statusCode}`));
+        reject(_rej(new Error(`proxy_connect_${res.statusCode}`)));
         return;
       }
-      // v15.1: 显式TLS握手
-      const tlsSock = tls.connect({
-        socket: socket,
-        servername: parsed.hostname,
-        rejectUnauthorized: false,
-      });
-      tlsSock.on("error", (e) => {
-        settle(reject, new Error(`tls_error: ${e.message}`));
-      });
-      tlsSock.on("secureConnect", () => {
-        const req = http.request(
-          {
-            createConnection: () => tlsSock,
-            hostname: parsed.hostname,
-            path: parsed.pathname + parsed.search,
-            method: "POST",
-            headers: {
-              "Content-Type": "application/proto",
-              "Content-Length": Buffer.byteLength(body),
-              Host: parsed.hostname,
-              "connect-protocol-version": "1",
-            },
-            timeout: timeout - 3000,
+      const req = https.request(
+        {
+          socket,
+          hostname: parsed.hostname,
+          path: parsed.pathname + parsed.search,
+          method: "POST",
+          headers: {
+            "Content-Type": "application/proto",
+            "Content-Length": Buffer.byteLength(body),
+            Host: parsed.hostname,
+            "connect-protocol-version": "1",
           },
-          (resp) => {
-            const chunks = [];
-            resp.on("data", (c) => chunks.push(c));
-            resp.on("end", () => {
-              settle(resolve, {
-                buf: Buffer.concat(chunks),
-                status: resp.statusCode,
-              });
-            });
-          },
-        );
-        req.on("error", (e) => {
-          settle(reject, new Error(`req_error: ${e.message}`));
-        });
-        req.on("timeout", () => {
-          req.destroy();
-          settle(reject, new Error("req_timeout"));
-        });
-        req.write(body);
-        req.end();
+          servername: parsed.hostname,
+          rejectUnauthorized: false,
+          timeout: timeout - 2000,
+        },
+        (resp) => {
+          const chunks = [];
+          resp.on("data", (c) => chunks.push(c));
+          resp.on("end", () => {
+            clearTimeout(timer);
+            // v17.11 采样 RTT + outcome (via proxy 路径)
+            const rtt = Date.now() - _startTs;
+            const ok = resp.statusCode >= 200 && resp.statusCode < 400;
+            _adaptive.sampleRtt(rtt);
+            _adaptive.sampleOutcome(ok);
+            resolve({ buf: Buffer.concat(chunks), status: resp.statusCode });
+          });
+        },
+      );
+      req.on("error", (e) => {
+        clearTimeout(timer);
+        reject(_rej(e));
       });
+      req.on("timeout", () => {
+        clearTimeout(timer);
+        req.destroy();
+        reject(_rej(new Error("req_timeout")));
+      });
+      req.write(body);
+      req.end();
     });
     connReq.on("error", (e) => {
-      settle(reject, new Error(`conn_error: ${e.message}`));
+      clearTimeout(timer);
+      reject(_rej(e));
     });
     connReq.on("timeout", () => {
+      clearTimeout(timer);
       connReq.destroy();
-      settle(reject, new Error("proxy_conn_timeout"));
+      reject(_rej(new Error("proxy_conn_timeout")));
     });
     connReq.end();
   });
@@ -1904,17 +2859,32 @@ function _extractQuotaFields(v, msgs) {
   if (total !== undefined && total > 0 && total <= 10000) valid++;
   if (valid < 2) return null; // 至少2个有效字段才接受 (防relay单字段误读)
 
-  // 尝试从protobuf string字段中提取plan名称
+  // v16根因修复: 提取plan名称
+  // 根因: PlanInfo是嵌套消息(F1.F1=plan_type enum, F1.F2=plan_name string)
+  // 旧代码尝试toString()整个子消息字节为UTF-8匹配计划名 — 必然失败(proto标签字节地址前缀导致正则不匹配)
+  // 修复: 先尝试旧格式兼容, 再解析msgs[1]为PlanInfo嵌套消息取F2字符串
   let planName = null;
   if (msgs) {
     const knownPlans =
       /^(free|pro_trial|pro|trial|enterprise|team|individual)$/i;
+    // 先尝试直接字符串匹配(旧API格式兼容)
     for (const fn of Object.keys(msgs)) {
       try {
         const str = msgs[fn].toString("utf8").trim();
         if (knownPlans.test(str)) {
           planName = str;
           break;
+        }
+      } catch {}
+    }
+    // v16新: 解析msgs[1](PlanInfo嵌套消息) — 内层F2=plan_name字符串
+    // 根据逆向: F1.F1=type_enum, F1.F2=name_string
+    if (!planName && msgs[1] && msgs[1].length > 2) {
+      try {
+        const planMsgFields = parseProtoFields(msgs[1]);
+        if (planMsgFields.messages && planMsgFields.messages[2]) {
+          const str = planMsgFields.messages[2].toString("utf8").trim();
+          if (knownPlans.test(str)) planName = str;
         }
       } catch {}
     }
@@ -2057,20 +3027,20 @@ function parsePlanStatus(buf) {
 // ── 单通道Firebase登录 ──
 async function _firebaseVia(channel, email, password, key) {
   const payload = JSON.stringify({ email, password, returnSecureToken: true });
-  const url = `https://${FIREBASE_HOST}/v1/accounts:signInWithPassword?key=${key}`;
+  const url = `https://${_getFirebaseHost()}/v1/accounts:signInWithPassword?key=${key}`;
 
   switch (channel) {
     case "direct":
       return _httpsPost(url, payload, {
         timeout: 8000,
-        headers: { Referer: FIREBASE_REFERER },
+        headers: { Referer: _getFirebaseReferer() },
       });
 
     case "proxy":
-      return _detectProxy().then((port) => {
-        if (!port) throw new Error("no_proxy");
-        return _httpsViaProxy(_proxyHostCache, port, url, payload, 10000, {
-          Referer: FIREBASE_REFERER,
+      return _detectProxy().then((proxy) => {
+        if (!proxy) throw new Error("no_proxy");
+        return _httpsViaProxy(proxy.host, proxy.port, url, payload, 10000, {
+          Referer: _getFirebaseReferer(),
         });
       });
 
@@ -2081,7 +3051,7 @@ async function _firebaseVia(channel, email, password, key) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Referer: FIREBASE_REFERER,
+          Referer: _getFirebaseReferer(),
         },
         body: payload,
         timeout: 12000,
@@ -2110,7 +3080,7 @@ async function firebaseLogin(email, password) {
 
   // Phase 1: 全并行竞速 — 2keys × 2channels = 4个请求同时发射
   const blastPromises = [];
-  for (const key of FIREBASE_KEYS) {
+  for (const key of _getFirebaseKeys()) {
     const keySuffix = key.slice(-4);
     for (const ch of channels) {
       blastPromises.push(
@@ -2126,9 +3096,6 @@ async function firebaseLogin(email, password) {
             const msg = (typeof err === "object" ? err?.message : err) || "";
             if (/INVALID|NOT_FOUND|DISABLED|WRONG/.test(msg))
               return { ok: false, permanent: true, error: msg };
-            // v15.1: TOO_MANY_ATTEMPTS = Firebase限流, 作为已知错误返回(不抛异常)
-            if (/TOO_MANY_ATTEMPTS/.test(msg))
-              return { ok: false, rateLimit: true, error: msg };
             throw new Error(msg || "no_token");
           })
           .catch((e) => {
@@ -2144,27 +3111,18 @@ async function firebaseLogin(email, password) {
     if (result.ok) return result;
     if (result.permanent)
       return { ok: false, error: result.error, channel: "permanent" };
-    // v15.1: Firebase限流 → 直接返回, 不进Phase 2 (重试会加重限流)
-    if (result.rateLimit)
-      return { ok: false, error: result.error, channel: "rate_limit" };
   } catch (aggErr) {
     const permanentErr = Object.values(errors).find((e) =>
       /INVALID|NOT_FOUND|DISABLED|WRONG/.test(e),
     );
     if (permanentErr)
       return { ok: false, error: permanentErr, channel: "permanent" };
-    // v15.1: 检查是否所有通道都因限流失败
-    const rateLimitErr = Object.values(errors).find((e) =>
-      /TOO_MANY_ATTEMPTS/.test(e),
-    );
-    if (rateLimitErr)
-      return { ok: false, error: rateLimitErr, channel: "rate_limit" };
   }
 
   // Phase 2: 刷新代理后全并行重试 (v11: 全keys×channels, 不再只retry单key)
   _invalidateProxyCache();
   const retryPromises = [];
-  for (const key of FIREBASE_KEYS) {
+  for (const key of _getFirebaseKeys()) {
     const keySuffix = key.slice(-4);
     for (const ch of channels) {
       retryPromises.push(
@@ -2190,9 +3148,272 @@ async function firebaseLogin(email, password) {
     if (result.ok) return result;
   } catch {}
 
-  log(`firebaseLogin ALL FAILED: ${JSON.stringify(errors)}`);
   return { ok: false, error: "all_channels_failed", details: errors };
 }
+
+// ── v17.5: Devin 密码登录回退 — 道法自然·Windsurf 身份迁移适配 ──
+// 背景: Cognition 收购 Windsurf 后身份迁至 Devin, 新账号只在 Devin 不在 Firebase
+// 验证: /_devin-auth/password/login 返回 {token:auth1_xxx, user_id:user-xxx, email}
+// 作用: Firebase INVALID_LOGIN_CREDENTIALS 时探测此账号是否 Devin-only, 识别后避免被永久拉黑
+function _getDevinLoginUrl() {
+  return _cfg(
+    "devin.loginUrl",
+    "https://windsurf.com/_devin-auth/password/login",
+  );
+}
+async function _devinLogin(email, password) {
+  const url = _getDevinLoginUrl();
+  const payload = JSON.stringify({ email, password });
+  const headers = {
+    "Content-Type": "application/json",
+    Referer: "https://windsurf.com/account/login",
+  };
+  // 复用 Firebase 三通道架构: native > proxy > direct
+  const channels = [
+    async () => {
+      const r = await _nativeFetch(url, {
+        method: "POST",
+        headers,
+        body: payload,
+        timeout: 12000,
+      });
+      if (typeof r.data !== "string") throw new Error("devin_native_no_data");
+      return { status: r.status, text: r.data };
+    },
+    async () => {
+      const proxy = await _detectProxy();
+      if (!proxy) throw new Error("no_proxy");
+      const r = await _httpsViaProxy(
+        proxy.host,
+        proxy.port,
+        url,
+        payload,
+        10000,
+        headers,
+      );
+      // _httpsViaProxy 已返回 parsed JSON; 转为统一形状
+      return { status: 200, text: JSON.stringify(r || {}) };
+    },
+    async () => {
+      const r = await _httpsPost(url, payload, { timeout: 8000, headers });
+      return { status: 200, text: JSON.stringify(r || {}) };
+    },
+  ];
+  try {
+    const result = await Promise.any(
+      channels.map((ch) =>
+        ch().then((r) => {
+          let j = null;
+          try {
+            j = typeof r.text === "string" ? JSON.parse(r.text) : r.text;
+          } catch {
+            throw new Error("devin_parse_error");
+          }
+          if (j && j.token && j.user_id) {
+            return {
+              ok: true,
+              auth1Token: j.token,
+              userId: j.user_id,
+              email: j.email,
+            };
+          }
+          // 200 但无 token: 密码错或 email 不存在
+          const err = (j && (j.error || j.message)) || "devin_no_token";
+          throw new Error(err);
+        }),
+      ),
+    );
+    return result;
+  } catch (aggErr) {
+    const msg =
+      (aggErr &&
+        aggErr.errors &&
+        aggErr.errors[0] &&
+        aggErr.errors[0].message) ||
+      String(aggErr && aggErr.message ? aggErr.message : aggErr);
+    return { ok: false, error: msg };
+  }
+}
+
+// ── v17.5 Level 2: WindsurfPostAuth — auth1_token → sessionToken ──
+// 背景: Windsurf IDE 原生接受 3 种 token 前缀: sk-ws-01- / devin-session-token$ / cog_
+//       Devin 登录后拿到 auth1_token, 必须经 WindsurfPostAuth 换取 sessionToken (devin-session-token$ 前缀)
+// 验证: POST /_backend/exa.seat_management_pb.SeatManagementService/WindsurfPostAuth
+//       body: {auth1_token, org_id?}  →  {sessionToken, auth1Token, accountId, primaryOrgId}
+function _getWindsurfPostAuthUrl() {
+  return _cfg(
+    "devin.postAuthUrl",
+    "https://windsurf.com/_backend/exa.seat_management_pb.SeatManagementService/WindsurfPostAuth",
+  );
+}
+
+async function _devinPostAuth(auth1Token, orgId) {
+  const url = _getWindsurfPostAuthUrl();
+  const bodyObj = { auth1_token: auth1Token };
+  if (orgId) bodyObj.org_id = orgId;
+  const payload = JSON.stringify(bodyObj);
+  const headers = {
+    "Content-Type": "application/json",
+    Origin: "https://windsurf.com",
+    Referer: "https://windsurf.com/profile",
+  };
+  const channels = [
+    async () => {
+      const r = await _nativeFetch(url, {
+        method: "POST",
+        headers,
+        body: payload,
+        timeout: 12000,
+      });
+      if (typeof r.data !== "string")
+        throw new Error("postauth_native_no_data");
+      return { status: r.status, text: r.data };
+    },
+    async () => {
+      const proxy = await _detectProxy();
+      if (!proxy) throw new Error("no_proxy");
+      const r = await _httpsViaProxy(
+        proxy.host,
+        proxy.port,
+        url,
+        payload,
+        10000,
+        headers,
+      );
+      return { status: 200, text: JSON.stringify(r || {}) };
+    },
+    async () => {
+      const r = await _httpsPost(url, payload, { timeout: 8000, headers });
+      return { status: 200, text: JSON.stringify(r || {}) };
+    },
+  ];
+  try {
+    const result = await Promise.any(
+      channels.map((ch) =>
+        ch().then((r) => {
+          let j = null;
+          try {
+            j = typeof r.text === "string" ? JSON.parse(r.text) : r.text;
+          } catch {
+            throw new Error("postauth_parse_error");
+          }
+          if (
+            j &&
+            typeof j.sessionToken === "string" &&
+            j.sessionToken.startsWith("devin-session-token$")
+          ) {
+            return {
+              ok: true,
+              sessionToken: j.sessionToken,
+              auth1Token: j.auth1Token || auth1Token,
+              accountId: j.accountId || "",
+              primaryOrgId: j.primaryOrgId || "",
+            };
+          }
+          const err =
+            (j && (j.error || j.message || j.code)) || "postauth_no_session";
+          throw new Error(err);
+        }),
+      ),
+    );
+    return result;
+  } catch (aggErr) {
+    const msg =
+      (aggErr &&
+        aggErr.errors &&
+        aggErr.errors[0] &&
+        aggErr.errors[0].message) ||
+      String(aggErr && aggErr.message ? aggErr.message : aggErr);
+    return { ok: false, error: msg };
+  }
+}
+
+// ── v17.14 反者道之动 · Devin sessionToken 缓存 · 重复切号节省 ~3000ms ──
+// 逆流推源: v17.13 实测 switch 5090ms = _devinFullSwitch(~3585ms) + injectAuth(~1505ms)
+//           _devinLogin + _devinPostAuth 两次串行 HTTPS · 无缓存 · 每次切号重跑
+// 唯变所适: 复用 Firebase _tokenCache 设计 · 缓存 Devin sessionToken
+//           命中 → 跳过两阶 HTTPS · 直接 injectAuth · 总耗时压到 ~1500ms
+// 持久化: 与 _tokenCache 一并 _saveTokenCache / _loadTokenCache · 跨会话有效
+const _devinSessionCache = new Map(); // email → { sessionToken, auth1Token, accountId, primaryOrgId, userId, expiresAt }
+let _devinCacheDirty = false;
+
+function _getDevinCached(email) {
+  const key = (email || "").toLowerCase();
+  const c = _devinSessionCache.get(key);
+  if (!c || !c.sessionToken) return null;
+  if (c.expiresAt <= Date.now()) {
+    _devinSessionCache.delete(key);
+    _devinCacheDirty = true;
+    return null;
+  }
+  return c;
+}
+
+function _setDevinCache(email, data) {
+  const key = (email || "").toLowerCase();
+  _devinSessionCache.set(key, {
+    sessionToken: data.sessionToken,
+    auth1Token: data.auth1Token || "",
+    accountId: data.accountId || "",
+    primaryOrgId: data.primaryOrgId || "",
+    userId: data.userId || "",
+    expiresAt: Date.now() + _getTokenCacheTtl(),
+  });
+  _devinCacheDirty = true;
+}
+
+function _invalidateDevinCache(email) {
+  const key = (email || "").toLowerCase();
+  if (_devinSessionCache.has(key)) {
+    _devinSessionCache.delete(key);
+    _devinCacheDirty = true;
+  }
+}
+
+// ── v17.5 Level 2 + v17.14 Devin 缓存: 完整 Devin 切号流程 ──
+// password → [cache HIT?] → _devinLogin(auth1_token) → _devinPostAuth(sessionToken) → injectAuth
+// opts.forceRefresh=true: 跳过缓存强制重新登录 (用于 inject 失败后重试)
+async function _devinFullSwitch(email, password, opts = {}) {
+  // 缓存快速路径 (省去两次 HTTPS · ~3000ms)
+  if (!opts.forceRefresh) {
+    const cached = _getDevinCached(email);
+    if (cached) {
+      log(
+        `devin: ⚡ session cache HIT ${email.substring(0, 20)} (节省 ~3000ms)`,
+      );
+      return {
+        ok: true,
+        sessionToken: cached.sessionToken,
+        auth1Token: cached.auth1Token,
+        accountId: cached.accountId,
+        primaryOrgId: cached.primaryOrgId,
+        userId: cached.userId,
+        _fromCache: true,
+      };
+    }
+  }
+  // 冷路径: 完整两阶登录
+  const dl = await _devinLogin(email, password);
+  if (!dl.ok) return { ok: false, stage: "login", error: dl.error };
+  const pa = await _devinPostAuth(dl.auth1Token);
+  if (!pa.ok) return { ok: false, stage: "postauth", error: pa.error };
+  const result = {
+    ok: true,
+    sessionToken: pa.sessionToken,
+    auth1Token: pa.auth1Token,
+    accountId: pa.accountId,
+    primaryOrgId: pa.primaryOrgId,
+    userId: dl.userId,
+  };
+  _setDevinCache(email, result);
+  return result;
+}
+
+// ── v17.8 道法自然 · 真实数据通道 · 统一 fetchAccountQuota 入口 ──
+// 历史: v17.7 _softEncodeDevinUsage 造假 (daily=100/weekly=100/plan='Devin'/planEnd=+365d) 违背道法 → 已彻底删除
+// 现状: Firebase idToken 与 Devin sessionToken 共用同一 proto schema → fetchAccountQuota 内建 fallback
+//       scanBackgroundQuota/verifyAndPurgeExpired/monitor/pool-tick 一视同仁 · 上层零差别
+// 原则: 无为 (不造假) · 无不为 (真实数据自然流动)
 
 // ── 获取缓存的idToken或重新登录 ──
 async function getCachedToken(email, password) {
@@ -2204,7 +3425,7 @@ async function getCachedToken(email, password) {
   if (!loginResult.ok) return loginResult;
   _tokenCache.set(key, {
     idToken: loginResult.idToken,
-    expiresAt: Date.now() + TOKEN_CACHE_TTL,
+    expiresAt: Date.now() + _getTokenCacheTtl(),
   });
   _tokenCacheDirty = true;
   return loginResult;
@@ -2213,25 +3434,29 @@ async function getCachedToken(email, password) {
 // ── 获取账号实时额度 (Firebase登录→Relay→PlanStatus) ──
 // v7.2: 速率限制 — 每账号最少间隔10秒，429后退避60秒
 const _quotaFetchCooldown = new Map(); // email → {nextAllowedTs}
-const QUOTA_MIN_INTERVAL = 10000; // 正常最小间隔10秒
-const QUOTA_429_BACKOFF = 60000; // 429后退避60秒
+// QUOTA_MIN_INTERVAL / QUOTA_429_BACKOFF → _getQuotaMinInterval() / _getQuota429Backoff() (v17.1 getter化)
 
 // v7.2: DoH解析relay真实IP (绕过Clash fake-ip DNS返回127.0.0.1的问题)
 let _relayIPCache = { ip: null, ts: 0 };
-const RELAY_IP_TTL = 600000; // IP缓存10分钟
+// RELAY_IP_TTL → _getRelayIpTtl() (v17.1 getter化)
 
 async function _resolveRelayIP() {
-  if (_relayIPCache.ip && Date.now() - _relayIPCache.ts < RELAY_IP_TTL)
+  const relayHost = _getRelayHost();
+  if (!relayHost) return null; // relay未配置 → 跳过
+  if (_relayIPCache.ip && Date.now() - _relayIPCache.ts < _getRelayIpTtl())
     return _relayIPCache.ip;
   // 方法1: DoH via proxy (dns.google)
   try {
-    const port = await _detectProxy();
-    if (port) {
+    const proxy = await _detectProxy();
+    if (proxy) {
       const dohResult = await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("doh_timeout")), 8000);
+        const timer = setTimeout(
+          () => reject(new Error("doh_timeout")),
+          _getDohTimeoutMs(),
+        );
         const connReq = http.request({
-          host: _proxyHostCache,
-          port,
+          host: proxy.host,
+          port: proxy.port,
           method: "CONNECT",
           path: "dns.google:443",
           timeout: 5000,
@@ -2247,7 +3472,7 @@ async function _resolveRelayIP() {
             {
               socket,
               hostname: "dns.google",
-              path: `/resolve?name=${RELAY_HOST}&type=A`,
+              path: `/resolve?name=${relayHost}&type=A`,
               method: "GET",
               headers: { Host: "dns.google" },
               servername: "dns.google",
@@ -2314,12 +3539,12 @@ async function _resolveRelayIP() {
     const cfResult = await new Promise((cfResolve, cfReject) => {
       const timer = setTimeout(
         () => cfReject(new Error("cf_doh_timeout")),
-        6000,
+        _getDohTimeoutMs(),
       );
       const req = https.request(
         {
           hostname: "1.1.1.1",
-          path: `/dns-query?name=${RELAY_HOST}&type=A`,
+          path: `/dns-query?name=${relayHost}&type=A`,
           method: "GET",
           headers: {
             Accept: "application/dns-json",
@@ -2380,30 +3605,93 @@ async function fetchAccountQuota(email, password) {
       retryAfter: cd.nextAllowedTs - now,
     };
   }
-  _quotaFetchCooldown.set(key, { nextAllowedTs: now + QUOTA_MIN_INTERVAL });
+  _quotaFetchCooldown.set(key, { nextAllowedTs: now + _getQuotaMinInterval() });
 
+  // v17.8 道法自然 · 披褐怀玉 · 彻底对齐: 统一 token 入口 (idToken 或 sessionToken 皆可)
+  //   正常账号: Firebase login → idToken
+  //   Devin 账号: Firebase 失败 → _devinFullSwitch → sessionToken
+  //   上层代码零改动 · scan/purge/monitor/pool 全部统一走 fetchAccountQuota
+  let authToken = null;
   const loginResult = await getCachedToken(email, password);
-  if (!loginResult.ok) {
+  if (loginResult.ok) {
+    authToken = loginResult.idToken;
+  } else {
+    // Firebase login 失败 — 尝试 Devin 通道 (仅当账号已标记 devin, 或 Firebase INVALID)
     _tokenCache.delete(key);
-    return { ok: false, error: loginResult.error };
+    const err = loginResult.error || "";
+    const acc = _store
+      ? _store.accounts.find((a) => a.email.toLowerCase() === key)
+      : null;
+    const isDevinCandidate =
+      (acc && acc._authSystem === "devin") ||
+      /INVALID|NOT_FOUND|DISABLED|WRONG/.test(err);
+    if (!isDevinCandidate) {
+      return { ok: false, error: err };
+    }
+    log(`fetchQuota: ${email} Firebase FAIL(${err}) — 尝试 Devin fallback`);
+    const ds = await _devinFullSwitch(email, password);
+    if (!ds.ok) {
+      log(`fetchQuota: ${email} Devin FAIL ${ds.stage}/${ds.error}`);
+      return { ok: false, error: `devin_${ds.stage}: ${ds.error}` };
+    }
+    authToken = ds.sessionToken; // devin-session-token$<JWT>
+    // 更新 Devin 元数据 (vs 重复劳动的旧路径)
+    if (acc) {
+      acc._authSystem = "devin";
+      acc._devinUserId = ds.userId;
+      acc._devinAccountId = ds.accountId;
+      acc._devinOrgId = ds.primaryOrgId;
+      acc._devinSessionAt = Date.now();
+      acc._devinVerified = true;
+      acc._lastVerified = Date.now();
+      delete acc._verifyFailed;
+      delete acc._verifyFailedAt;
+      acc._verifyFailedCount = 0;
+      delete acc._unverified;
+    }
+    log(
+      `fetchQuota: ${email} Devin OK sessionToken=${ds.sessionToken.substring(0, 30)}...`,
+    );
   }
-  const proto = encodeProtoString(loginResult.idToken);
-  const planUrl = `https://${RELAY_HOST}/windsurf/plan-status`;
+  const proto = encodeProtoString(authToken);
+  const relayHost = _getRelayHost();
+  const planUrl = relayHost
+    ? `https://${relayHost}/windsurf/plan-status`
+    : null;
 
-  // v15.2: 4通道竞速 — 官方proxy优先, 直连次之, 中继兜底
-  // NOTE: Chromium native已移除 — Codeium/Windsurf gRPC端点不返回CORS headers,
-  //       webview fetch()必被浏览器CORS策略阻止 (Referer亦为forbidden header)
-  // 优先级: 官方(proxy) > 官方(direct) > Relay IP > Relay(proxy)
+  // v15: 5通道竞速 — Chromium原生优先, 官方API直连次之, 中继兜底
+  // 优先级: Chromium原生(万法归宗) > 官方(proxy) > 官方(direct) > Relay IP > Relay(proxy)
   const channels = [
-    // 通道0: 官方API via proxy (最可靠: 官方服务器不限流WAM)
+    // 通道0: Chromium原生 — 万法归宗 (系统代理自适应, 不依赖手动探测)
     async () => {
-      const port = await _detectProxy();
-      if (!port) throw new Error("no_proxy");
-      for (const url of OFFICIAL_PLAN_STATUS_URLS) {
+      for (const url of _getOfficialPlanStatusUrls()) {
+        try {
+          const resp = await _nativeFetch(url, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/proto",
+              "connect-protocol-version": "1",
+            },
+            body: proto,
+            binary: true,
+            timeout: 10000,
+          });
+          if (resp.status === 200 && resp.data && resp.data.length > 20) {
+            return { status: resp.status, buf: Buffer.from(resp.data) };
+          }
+        } catch {}
+      }
+      throw new Error("all_official_native_failed");
+    },
+    // 通道1: 官方API via proxy (最可靠: 官方服务器不限流WAM)
+    async () => {
+      const proxy = await _detectProxy();
+      if (!proxy) throw new Error("no_proxy");
+      for (const url of _getOfficialPlanStatusUrls()) {
         try {
           const resp = await _httpsPostRawViaProxy(
-            _proxyHostCache,
-            port,
+            proxy.host,
+            proxy.port,
             url,
             proto,
             10000,
@@ -2414,9 +3702,9 @@ async function fetchAccountQuota(email, password) {
       }
       throw new Error("all_official_proxy_failed");
     },
-    // 通道1: 官方API直连 (无proxy, 适合可直连Google Cloud的网络)
+    // 通道2: 官方API直连 (无proxy, 适合可直连Google Cloud的网络)
     async () => {
-      for (const url of OFFICIAL_PLAN_STATUS_URLS) {
+      for (const url of _getOfficialPlanStatusUrls()) {
         try {
           const resp = await _httpsPostRaw(url, proto, { timeout: 10000 });
           if (resp.status === 200 && resp.buf && resp.buf.length > 20)
@@ -2425,19 +3713,21 @@ async function fetchAccountQuota(email, password) {
       }
       throw new Error("all_official_direct_failed");
     },
-    // 通道2: Relay直连真实IP (DoH解析绕过fake-ip)
+    // 通道3: Relay直连真实IP (DoH解析绕过fake-ip) — relay未配置时跳过
     async () => {
+      if (!planUrl) throw new Error("relay_not_configured");
       const ip = await _resolveRelayIP();
       if (!ip) throw new Error("no_relay_ip");
       return _httpsPostRaw(planUrl, proto, { timeout: 12000, hostname: ip });
     },
-    // 通道3: Relay via proxy (最后手段)
+    // 通道4: Relay via proxy (最后手段) — relay未配置时跳过
     async () => {
-      const port = await _detectProxy();
-      if (!port) throw new Error("no_proxy");
+      if (!planUrl) throw new Error("relay_not_configured");
+      const proxy = await _detectProxy();
+      if (!proxy) throw new Error("no_proxy");
       return _httpsPostRawViaProxy(
-        _proxyHostCache,
-        port,
+        proxy.host,
+        proxy.port,
         planUrl,
         proto,
         10000,
@@ -2453,9 +3743,9 @@ async function fetchAccountQuota(email, password) {
       .then((resp) => {
         if (resp.status === 429) {
           _quotaFetchCooldown.set(key, {
-            nextAllowedTs: Date.now() + QUOTA_429_BACKOFF,
+            nextAllowedTs: Date.now() + _getQuota429Backoff(),
           });
-          log(`${chName}: 429 → backoff ${QUOTA_429_BACKOFF / 1000}s`);
+          log(`${chName}: 429 → backoff ${_getQuota429Backoff() / 1000}s`);
           throw new Error("429");
         }
         if (resp.status === 200 && resp.buf && resp.buf.length > 50) {
@@ -2474,8 +3764,14 @@ async function fetchAccountQuota(email, password) {
         throw new Error(`${chName}_no_data`);
       })
       .catch((e) => {
-        log(`${chName}: ${e.message}`);
-        if (i === channels.length - 1) _invalidateProxyCache();
+        // v17.15 披褐怀玉: 业务错误 (relay_not_configured/no_relay_ip) 属用户配置 · 非代理故障
+        // 旧代码每次都 log + invalidate proxy cache → proxy 5min TTL 失效 → 每 fetchQuota 重检
+        // 新: 业务错误静默 · 仅真实网络/代理错误 invalidate
+        const isBusinessErr =
+          e.message === "relay_not_configured" || e.message === "no_relay_ip";
+        if (!isBusinessErr) log(`${chName}: ${e.message}`);
+        if (i === channels.length - 1 && !isBusinessErr)
+          _invalidateProxyCache();
         throw e;
       });
   });
@@ -2520,12 +3816,22 @@ function _updateAccountUsage(email, quota) {
   acc.usage = {
     daily: { remaining: quota.daily },
     weekly: { remaining: effectiveWeekly },
-    plan: quota.planName || prev.plan || "Trial",
-    // 道法自然: planEnd过期但仍有配额(D>0或W>0) → 不存储过期planEnd, 避免误标"已过期"
+    // 道法自然: Free确定性不可被Trial覆写 — 已降级账号无法自我升级
+    // 根因: API对降级账号仍返回"Trial"(planName字段滞后), 若直接覆写会破坏purge检测
+    plan: (() => {
+      const prevP = (prev.plan || "").toLowerCase();
+      const newP = (quota.planName || "").toLowerCase();
+      if (
+        prevP === "free" &&
+        (!newP || newP === "trial" || newP === "pro_trial")
+      )
+        return prev.plan; // Free不可逆: 保持Free, 忽略滞后Trial响应
+      return quota.planName || prev.plan || "Trial";
+    })(),
+    // v16根因修复: 始终保留真实planEnd, 不再因有配额而清除过期planEnd
+    // 旧逻辑"宽限期清除planEnd"导致缓存兜底无法检测到已转free账号
     planEnd: (() => {
       const pe = quota.planEndUnix ? quota.planEndUnix * 1000 : 0;
-      if (pe > 0 && pe < Date.now() && (quota.daily > 0 || effectiveWeekly > 0))
-        return 0; // 宽限期: 清除过期planEnd
       return pe || prev.planEnd || 0;
     })(),
     // 重置时间: API值 > 计算值 > 旧值
@@ -2539,36 +3845,47 @@ function _updateAccountUsage(email, quota) {
   };
 }
 
-// ── v14.3: 统一命令注入 — 为道日损·无条件p3 ──
-// v14.2诊断: timeout路径无p3→7s快速释放, 但retry常需19s+ (7+5+7)
-// v14.3实证: code:0路径p3成功率~50%, timeout后provider多为慢非hung, p3新命令同样有效
-// 策略: p3无条件触发(新命令) | p3超时4s(总max~12s) | 连续3次失败重置命令缓存
+// ── v17.13 反者道之动 · 命令注入三阶重构 ──────────────────────────
+// 逆流推源: v14.3 的 P1(3s)+P2(4s死等) 是基于网络 RTT 的错误归因
+//           executeCommand 是 IDE 内部调用 · 不经网络 · P50 ~ 5s
+//           P1=3s 必 timeout → P2 延续死等 4s · 90% 切号浪费 1-4s
+// 唯变所适: P1 超时改为 _injectAdaptive.getTimeoutMs() · 默认 8s · 学习后 p95×1.5
+//           P2 死等彻底删除 (无新信息 · 零价值)
+//           原 P3/P4 重命名为 P2/P3, 超时/重试延迟同走 _injectAdaptive
+// 柔弱胜刚强: 成功分支 sample 实测耗时 · 系统自学收敛 · 用户零感知
 async function injectAuth(idToken) {
-  // v14.2: 连续失败3次 → 重置命令缓存, 允许Phase 4尝试备选命令
+  // 连续失败 3 次 → 重置命令缓存, 允许 Phase 3 尝试所有备选
   if (_consecutiveInjectFails >= 3 && _workingInjectCmd) {
     log(
       `inject: ⚠️ ${_consecutiveInjectFails}次连续失败 → 重置命令缓存 (was: ${_workingInjectCmd})`,
     );
     _workingInjectCmd = null;
   }
-  const cmd = _workingInjectCmd || INJECT_COMMANDS[0];
+  const cmd = _workingInjectCmd || _getInjectCommands()[0];
   const t0 = Date.now();
+  const adaptiveTimeout = _injectAdaptive.getTimeoutMs();
   let gotCode0 = false;
 
-  // Phase 1: 发射唯一命令, 3s快探 (温热时直接命中)
-  log(`inject: p1 [+${Date.now() - t0}ms]`);
+  // ── Phase 1 (原 P1+P2 合并): 主命令 · 自适应单次等待 ──
+  // v17.13: 超时 = 8000ms 默认, 学习后 = p95×1.5 clamp[3000,15000]
+  //         P95 的网络慢场景自动放大, P50 的快场景超时也不会误触发
+  log(`inject: p1 t=${adaptiveTimeout}ms [+${Date.now() - t0}ms]`);
   const cmdP = vscode.commands.executeCommand(cmd, idToken);
   try {
     const r1 = await Promise.race([
       cmdP,
       new Promise((_, rej) =>
-        setTimeout(() => rej(new Error("p1_timeout")), 3000),
+        setTimeout(() => rej(new Error("p1_timeout")), adaptiveTimeout),
       ),
     ]);
     const ex1 = _extractInjectResult(r1);
     if (ex1) {
+      const latency = Date.now() - t0;
+      _injectAdaptive.sample(latency); // 喂数据 · 系统自学
       _workingInjectCmd = cmd;
-      log(`inject: OK p1 [${Date.now() - t0}ms]`);
+      log(
+        `inject: OK p1 [${latency}ms] adaptive=${JSON.stringify(_injectAdaptive.snapshot())}`,
+      );
       _lastSwitchTime = Date.now();
       _lastInjectFail = 0;
       _consecutiveInjectFails = 0;
@@ -2581,93 +3898,71 @@ async function injectAuth(idToken) {
       log(`inject: p1 unexpected [${Date.now() - t0}ms]`);
     }
   } catch {
-    log(`inject: p1 3s超时 [${Date.now() - t0}ms]`);
+    log(`inject: p1 ${adaptiveTimeout}ms超时 [${Date.now() - t0}ms]`);
   }
 
-  // Phase 2: 复用p1命令(不发新命令!), 再等4s收割 (仅在p1 timeout时有意义)
-  if (!gotCode0) {
-    try {
-      const r2 = await Promise.race([
-        cmdP, // 同一个Promise — 不重叠, 不混乱
-        new Promise((_, rej) =>
-          setTimeout(() => rej(new Error("p2_timeout")), 4000),
-        ),
-      ]);
-      const ex2 = _extractInjectResult(r2);
-      if (ex2) {
-        _workingInjectCmd = cmd;
-        log(`inject: OK p2 [${Date.now() - t0}ms]`);
-        _lastSwitchTime = Date.now();
-        _lastInjectFail = 0;
-        _consecutiveInjectFails = 0;
-        return ex2;
-      }
-      if (r2?.error?.code === 0) {
-        gotCode0 = true;
-        log(`inject: p2 code:0 [${Date.now() - t0}ms]`);
-      } else {
-        log(`inject: p2 unexpected [${Date.now() - t0}ms]`);
-      }
-    } catch {
-      log(`inject: p2 5.5s超时 [${Date.now() - t0}ms]`);
-    }
-  }
-
-  // Phase 3 (v14.3): 无条件重试 — 无论code:0还是timeout, 发新命令·给provider第二次机会
-  // 实证: code:0→p3成功率~50% | timeout→provider多为慢非hung·新命令常在4s内命中
-  // 成本: 最多多等5s(1s冷却+4s超时), 但省掉外层retry的5s+7s=12s
-  await new Promise((r) => setTimeout(r, 1000));
+  // ── Phase 2 (原 P3): 新命令重试 · 自适应延迟 + 自适应超时 ──
+  // v17.13: retryDelay = 200ms 默认 (原 1000ms), 学习后 = p95×0.1 clamp[100,2000]
+  //         IDE 极短喘息即可, 无需死等
+  const retryDelay = _injectAdaptive.getRetryDelayMs();
+  await new Promise((r) => setTimeout(r, retryDelay));
   log(
-    `inject: p3 retry${gotCode0 ? " (code:0)" : " (timeout)"} [+${Date.now() - t0}ms]`,
+    `inject: p2 retry${gotCode0 ? " (code:0)" : " (timeout)"} delay=${retryDelay}ms t=${adaptiveTimeout}ms [+${Date.now() - t0}ms]`,
   );
   const retryP = vscode.commands.executeCommand(cmd, idToken);
   try {
-    const r3 = await Promise.race([
+    const r2 = await Promise.race([
       retryP,
       new Promise((_, rej) =>
-        setTimeout(() => rej(new Error("p3_timeout")), 4000),
+        setTimeout(() => rej(new Error("p2_timeout")), adaptiveTimeout),
       ),
     ]);
-    const ex3 = _extractInjectResult(r3);
-    if (ex3) {
+    const ex2 = _extractInjectResult(r2);
+    if (ex2) {
+      const latency = Date.now() - t0;
+      _injectAdaptive.sample(latency); // 慢场景也喂数据 · 学习真实 p95
       _workingInjectCmd = cmd;
-      log(`inject: OK p3 [${Date.now() - t0}ms]`);
+      log(`inject: OK p2 [${latency}ms]`);
       _lastSwitchTime = Date.now();
       _lastInjectFail = 0;
       _consecutiveInjectFails = 0;
-      return ex3;
+      return ex2;
     }
-    if (r3?.error?.code === 0) {
-      log(`inject: p3 code:0 [${Date.now() - t0}ms] — 再次拒绝`);
+    if (r2?.error?.code === 0) {
+      log(`inject: p2 code:0 [${Date.now() - t0}ms] — 再次拒绝`);
     }
   } catch {
-    log(`inject: p3 timeout [${Date.now() - t0}ms]`);
+    log(`inject: p2 ${adaptiveTimeout}ms超时 [${Date.now() - t0}ms]`);
   }
 
-  // Phase 4 (v14.2): 备选命令 — 连续失败3次或未确认命令时, 尝试所有备选
+  // ── Phase 3 (原 P4): 备选命令 · 连续失败/未确认时尝试所有备选 ──
   if (!_workingInjectCmd || _consecutiveInjectFails >= 2) {
-    for (const altCmd of INJECT_COMMANDS) {
+    for (const altCmd of _getInjectCommands()) {
       if (altCmd === cmd) continue;
-      log(`inject: p4 trying ${altCmd} [+${Date.now() - t0}ms]`);
+      log(
+        `inject: p3 trying ${altCmd} t=${adaptiveTimeout}ms [+${Date.now() - t0}ms]`,
+      );
       try {
         const altP = vscode.commands.executeCommand(altCmd, idToken);
-        const r4 = await Promise.race([
+        const r3 = await Promise.race([
           altP,
           new Promise((_, rej) =>
-            setTimeout(() => rej(new Error("p4_timeout")), 5000),
+            setTimeout(() => rej(new Error("p3_timeout")), adaptiveTimeout),
           ),
         ]);
-        const ex4 = _extractInjectResult(r4);
-        if (ex4) {
+        const ex3 = _extractInjectResult(r3);
+        if (ex3) {
+          const latency = Date.now() - t0;
+          _injectAdaptive.sample(latency);
           _workingInjectCmd = altCmd;
-          log(`inject: OK p4 ${altCmd} [${Date.now() - t0}ms]`);
+          log(`inject: OK p3 ${altCmd} [${latency}ms]`);
           _lastSwitchTime = Date.now();
           _lastInjectFail = 0;
           _consecutiveInjectFails = 0;
-          return ex4;
+          return ex3;
         }
       } catch {
-        log(`inject: p4 ${altCmd} failed [${Date.now() - t0}ms]`);
+        log(`inject: p3 ${altCmd} failed [${Date.now() - t0}ms]`);
       }
     }
   }
@@ -2705,33 +4000,122 @@ function _extractInjectResult(result) {
 // ── Firebase accounts:lookup — 获取账号创建时间 (官方API) ──
 async function firebaseLookup(idToken) {
   const payload = JSON.stringify({ idToken });
-  for (const key of FIREBASE_KEYS) {
-    const url = `https://${FIREBASE_HOST}/v1/accounts:lookup?key=${key}`;
+  for (const key of _getFirebaseKeys()) {
+    const url = `https://${_getFirebaseHost()}/v1/accounts:lookup?key=${key}`;
     try {
       const result = await _httpsPost(url, payload, {
         timeout: 8000,
-        headers: { Referer: FIREBASE_REFERER },
+        headers: { Referer: _getFirebaseReferer() },
       });
       if (result?.users?.[0]) return result.users[0];
     } catch {}
     // 也尝试代理通道
     try {
-      const port = await _detectProxy();
-      if (port) {
-        const url2 = `https://${FIREBASE_HOST}/v1/accounts:lookup?key=${key}`;
+      const proxy = await _detectProxy();
+      if (proxy) {
+        const url2 = `https://${_getFirebaseHost()}/v1/accounts:lookup?key=${key}`;
         const result = await _httpsViaProxy(
-          _proxyHostCache,
-          port,
+          proxy.host,
+          proxy.port,
           url2,
           payload,
           10000,
-          { Referer: FIREBASE_REFERER },
+          { Referer: _getFirebaseReferer() },
         );
         if (result?.users?.[0]) return result.users[0];
       }
     } catch {}
   }
   return null;
+}
+
+// ── v16: RegisterUser — 用idToken换apiKey (用于CheckChatCapacity) ──
+async function _registerUser(idToken) {
+  const body = encodeProtoString(idToken); // field 1 = idToken
+  const channels = [
+    () => _httpsPostRaw(_REGISTER_URL, body, { timeout: 10000 }),
+    async () => {
+      const proxy = await _detectProxy();
+      if (!proxy) throw new Error("no_proxy");
+      return _httpsPostRawViaProxy(
+        proxy.host,
+        proxy.port,
+        _REGISTER_URL,
+        body,
+        10000,
+      );
+    },
+  ];
+  for (const ch of channels) {
+    try {
+      const resp = await ch();
+      if (resp.status === 200 && resp.buf && resp.buf.length > 10) {
+        const fields = parseProtoFields(resp.buf);
+        if (fields.messages[1]) {
+          const ak = fields.messages[1].toString("utf8").trim();
+          if (ak.startsWith("sk-ws-")) return { ok: true, apiKey: ak };
+        }
+      }
+    } catch {}
+  }
+  return { ok: false, error: "register_failed" };
+}
+
+// ── v16: CheckChatCapacity — 验证账号对Claude模型的实际访问权 ──
+// 这是唯一可靠的Claude可用性信号: pro_trial→true, free/expired→false
+// Proto: F1=metadata{F1=apiKey}, F2=modelUid
+async function _checkClaudeCapacity(apiKey) {
+  // 编码请求: metadata submsg + model string
+  function _encVarIntBuf(v) {
+    const b = [];
+    while (v > 0x7f) {
+      b.push((v & 0x7f) | 0x80);
+      v >>>= 7;
+    }
+    b.push(v);
+    return Buffer.from(b);
+  }
+  function _encField(fieldNum, strOrBuf) {
+    const data =
+      typeof strOrBuf === "string" ? Buffer.from(strOrBuf, "utf8") : strOrBuf;
+    const tag = _encVarIntBuf((fieldNum << 3) | 2);
+    return Buffer.concat([tag, _encVarIntBuf(data.length), data]);
+  }
+  const metaBytes = _encField(1, apiKey); // metadata.field1 = apiKey
+  const body = Buffer.concat([
+    _encField(1, metaBytes),
+    _encField(2, _CLAUDE_PROBE_MODEL),
+  ]);
+  const channels = [
+    () => _httpsPostRaw(_CHAT_CAPACITY_URL, body, { timeout: 8000 }),
+    async () => {
+      const proxy = await _detectProxy();
+      if (!proxy) throw new Error("no_proxy");
+      return _httpsPostRawViaProxy(
+        proxy.host,
+        proxy.port,
+        _CHAT_CAPACITY_URL,
+        body,
+        8000,
+      );
+    },
+  ];
+  for (const ch of channels) {
+    try {
+      const resp = await ch();
+      if (resp.status === 200 && resp.buf && resp.buf.length >= 2) {
+        const fields = parseProtoFields(resp.buf);
+        // F1 = has_capacity (varint bool), F2 = message (string)
+        const hasCap = fields.varints[1];
+        const msg =
+          fields.messages && fields.messages[2]
+            ? fields.messages[2].toString("utf8")
+            : "";
+        return { ok: true, hasCapacity: hasCap === 1, message: msg };
+      }
+    } catch {}
+  }
+  return { ok: false, error: "capacity_check_failed" };
 }
 
 // ── 判断账号是否真正过期(已被isClaudeAvailable取代用于清理决策) ──
@@ -2773,6 +4157,44 @@ async function verifyAndPurgeExpired(store, opts = {}) {
     const acc = store.accounts[i];
     if (!acc) continue;
 
+    // v17.5 补完: Devin-only 账号跳过 Firebase, 走 Devin 全链路验证
+    // 反者道之动: DEAD6 在 Firebase 侧永久 INVALID, 但 Devin 侧活 — 不可冤枉
+    if (acc._authSystem === "devin") {
+      try {
+        const ds = await _devinFullSwitch(acc.email, acc.password);
+        if (ds.ok) {
+          acc._lastVerified = Date.now();
+          acc._devinUserId = ds.userId;
+          acc._devinAccountId = ds.accountId;
+          acc._devinOrgId = ds.primaryOrgId;
+          acc._devinSessionAt = Date.now();
+          acc._devinVerified = true;
+          delete acc._unverified;
+          delete acc._verifyFailed;
+          delete acc._verifyFailedAt;
+          acc._verifyFailedCount = 0;
+          if (store && typeof store.save === "function") store.save();
+          // v17.8 道法自然: 触发 fetchAccountQuota — 真实 plan 自动写回 acc.usage
+          await fetchAccountQuota(acc.email, acc.password).catch(() => {});
+          if (store && typeof store.save === "function") store.save();
+          log(
+            `purge: ${acc.email} → DEVIN✓ (userId=${(ds.userId || "").substring(0, 16)}... accountId=${(ds.accountId || "").substring(0, 16)}...) ${ds.ms}ms`,
+          );
+        } else {
+          toRemoveIndices.push(i);
+          reasons[i] = `devin_dead: ${ds.stage}/${ds.error}`;
+          log(`purge: ${acc.email} → DEVIN DEAD (${ds.stage}: ${ds.error})`);
+        }
+      } catch (devinErr) {
+        log(
+          `purge: ${acc.email} → DEVIN skip (${devinErr.message}), 保留不冤枉`,
+        );
+      }
+      // v17.9 软编码: purge 每账号间延迟可通过 wam.purgeDelayMs 覆盖
+      await new Promise((r) => setTimeout(r, _getPurgeDelayMs()));
+      continue;
+    }
+
     // Step 1: Firebase登录验证
     const loginResult = await firebaseLogin(acc.email, acc.password);
 
@@ -2812,8 +4234,10 @@ async function verifyAndPurgeExpired(store, opts = {}) {
     }
 
     // Step 2.5: 深度探测 — 获取实时Plan状态, 不信缓存只信API
-    // 反者道之动: D100/W100是假象, plan才是Claude可用性的ground truth
+    // v16根因修复: 显式验证前清除速率限制冷却, 确保获取新鲜数据(非限流缓存)
     if (!toRemoveIndices.includes(i)) {
+      _quotaFetchCooldown.delete(acc.email.toLowerCase()); // 强制绕过冷却期
+      const _prePlan = (acc.usage?.plan || "").toLowerCase(); // 探测前快照: 防API覆写
       try {
         const quota = await fetchAccountQuota(acc.email, acc.password);
         if (quota.ok) {
@@ -2833,7 +4257,7 @@ async function verifyAndPurgeExpired(store, opts = {}) {
               `purge: ${acc.email} → FREE (实时探测: plan=${freshPlan}, D${quota.daily}W${quota.weekly})`,
             );
           }
-          // Case 2: 试用过期 — 仅当D=0且W=0时才清理(planEnd过期但有配额仍可用)
+          // Case 2: 试用过期且无配额 → 清理
           else if (
             isExpired &&
             isTrialPlan(freshPlan) &&
@@ -2847,25 +4271,101 @@ async function verifyAndPurgeExpired(store, opts = {}) {
               `purge: ${acc.email} → EXPIRED+D0W0 ${daysExpired.toFixed(1)}d (plan=${freshPlan}, end=${new Date(freshPlanEnd).toISOString().slice(0, 10)})`,
             );
           }
-          // Case 2b: 试用过期但仍有配额 → 保留(Windsurf宽限期)
+          // Case 2b: 试用过期但有配额 → 实证表明已转free, Claude不可用 → 清理
+          // v16根因修复: 旧代码错误保留(认为是宽限期), 实测证明trial过期后Claude立即失效
           else if (isExpired && isTrialPlan(freshPlan)) {
+            toRemoveIndices.push(i);
+            reasons[i] =
+              `expired_trial_with_quota: plan=${freshPlan}过期${daysExpired.toFixed(1)}天已转free, D${quota.daily}W${quota.weekly}仅限免费模型`;
             log(
-              `purge: ${acc.email} → EXPIRED_BUT_USABLE (plan=${freshPlan} expired ${daysExpired.toFixed(1)}d, but D${quota.daily}W${quota.weekly}>0, 保留)`,
+              `purge: ${acc.email} → EXPIRED→FREE (plan=${freshPlan} expired ${daysExpired.toFixed(1)}d, D${quota.daily}W${quota.weekly}, Claude不可用)`,
             );
           }
-          // Case 3: Claude可用
+          // Case 3: plan未知或未确认 → 调用CheckChatCapacity进行地检
           else {
-            log(
-              `purge: ${acc.email} → CLAUDE✓ (plan=${freshPlan}${isExpired ? " expired!" : ""} D${quota.daily}W${quota.weekly})`,
-            );
+            // v16 根本修复: GetPlanStatus无法可靠判断Claude可用性(试用转free后plan仍显示Trial)
+            // 唯一可靠信号: CheckChatCapacity直接测试模型访问权
+            let claudeOk = true; // 默认保留
+            try {
+              const regResult = await _registerUser(loginResult.idToken);
+              if (regResult.ok) {
+                const capResult = await _checkClaudeCapacity(regResult.apiKey);
+                if (capResult.ok) {
+                  claudeOk = capResult.hasCapacity;
+                  if (!claudeOk) {
+                    toRemoveIndices.push(i);
+                    reasons[i] =
+                      `claude_no_capacity: ${_CLAUDE_PROBE_MODEL}不可用(${capResult.message || "no_capacity"}), plan=${freshPlan} D${quota.daily}W${quota.weekly}`;
+                    log(
+                      `purge: ${acc.email} → NO_CLAUDE (capacity=false: ${capResult.message}), plan=${freshPlan} D${quota.daily}W${quota.weekly}`,
+                    );
+                  } else {
+                    log(
+                      `purge: ${acc.email} → CLAUDE✓ (capacity=true, plan=${freshPlan} D${quota.daily}W${quota.weekly})`,
+                    );
+                  }
+                } else {
+                  if (_prePlan === "free") {
+                    toRemoveIndices.push(i);
+                    reasons[i] =
+                      `cap_fail_free: pre_plan=free, check_failed=${capResult.error}`;
+                    log(
+                      `purge: ${acc.email} → FREE (cap_check_failed+pre_plan=free)`,
+                    );
+                  } else {
+                    log(
+                      `purge: ${acc.email} → CLAUDE✓ (capacity_check_failed: ${capResult.error}, 保留)`,
+                    );
+                  }
+                }
+              } else {
+                if (_prePlan === "free") {
+                  toRemoveIndices.push(i);
+                  reasons[i] =
+                    `register_fail_free: pre_plan=free, register_failed=${regResult.error}`;
+                  log(
+                    `purge: ${acc.email} → FREE (register_failed+pre_plan=free)`,
+                  );
+                } else {
+                  log(
+                    `purge: ${acc.email} → CLAUDE✓ (register_failed: ${regResult.error}, plan=${freshPlan} D${quota.daily}W${quota.weekly}, 保留)`,
+                  );
+                }
+              }
+            } catch (e2) {
+              if (_prePlan === "free") {
+                toRemoveIndices.push(i);
+                reasons[i] = `probe_err_free: pre_plan=free, err=${e2.message}`;
+                log(
+                  `purge: ${acc.email} → FREE (capacity_probe_error+pre_plan=free)`,
+                );
+              } else {
+                log(
+                  `purge: ${acc.email} → CLAUDE✓ (capacity_probe_error: ${e2.message}, 保留)`,
+                );
+              }
+            }
           }
         } else {
-          log(
-            `purge: ${acc.email} → probe failed: ${quota.error} (保留, 不冤枉)`,
-          );
+          if (_prePlan === "free") {
+            toRemoveIndices.push(i);
+            reasons[i] =
+              `probe_fail_free: pre_plan=free, probe_failed=${quota.error}`;
+            log(`purge: ${acc.email} → FREE (probe_failed+pre_plan=free)`);
+          } else {
+            log(
+              `purge: ${acc.email} → probe failed: ${quota.error} (保留, 不冤枉)`,
+            );
+          }
         }
       } catch (e) {
-        log(`purge: ${acc.email} → probe error: ${e.message} (保留, 不冤枉)`);
+        if (_prePlan === "free") {
+          toRemoveIndices.push(i);
+          reasons[i] = `exception_free: pre_plan=free, err=${e.message}`;
+          log(`purge: ${acc.email} → FREE (exception+pre_plan=free)`);
+        } else {
+          log(`purge: ${acc.email} → probe error: ${e.message} (保留, 不冤枉)`);
+        }
       }
     }
 
@@ -2877,8 +4377,18 @@ async function verifyAndPurgeExpired(store, opts = {}) {
   for (let i = 0; i < store.accounts.length; i++) {
     if (toRemoveIndices.includes(i)) continue;
     const acc = store.accounts[i];
-    if (!acc.password) continue;
+    // v17.5 补完: Devin 账号已在 Step 0 验证过, 不受 Firebase 缓存误杀
+    if (acc._authSystem === "devin") continue;
     const h = store.getHealth(acc);
+    if (!acc.password) {
+      // 无密码账号: 无法Firebase验证, 仅凭缓存判断 — 道法自然: 已知plan=free即清理
+      if (h.checked && (h.plan || "").toLowerCase() === "free") {
+        toRemoveIndices.push(i);
+        reasons[i] = `no_pw_free: 无密码+缓存plan=free, Claude不可用`;
+        log(`purge: ${acc.email} → NO_PW_FREE (缓存兜底)`);
+      }
+      continue;
+    }
 
     // 缓存plan是free → 清理
     if ((h.plan || "").toLowerCase() === "free") {
@@ -2888,14 +4398,8 @@ async function verifyAndPurgeExpired(store, opts = {}) {
       continue;
     }
 
-    // 缓存planEnd已过期 + 试用计划 + D=0且W=0 → 清理(有配额的保留)
-    if (
-      h.planEnd > 0 &&
-      h.daysLeft <= 0 &&
-      isTrialPlan(h.plan) &&
-      (h.daily || 0) === 0 &&
-      (h.weekly || 0) === 0
-    ) {
+    // v16: 缓存planEnd已过期 + 试用计划 → 清理(无论配额多少, trial过期即转free)
+    if (h.planEnd > 0 && h.daysLeft <= 0 && isTrialPlan(h.plan)) {
       toRemoveIndices.push(i);
       reasons[i] =
         `cached_expired_no_quota: plan=${h.plan}过期${Math.abs(h.daysLeft).toFixed(1)}天且D0/W0, Claude不可用`;
@@ -2927,6 +4431,8 @@ async function verifyAndPurgeExpired(store, opts = {}) {
     // 写入归档文件 (追加模式，永不丢失)
     _archivePurged(store, archived);
     store.save();
+    // 道法自然: 封印save()回流 — 归档后直接擦除磁盘上的死号(包括save()遍历_mergeFromDisk可能回写的)
+    _cleanPurgedFromDisk(store);
   }
 
   _purgeRunning = false;
@@ -2952,6 +4458,71 @@ async function verifyAndPurgeExpired(store, opts = {}) {
 }
 
 // ── 归档被清理的账号 (追加写入，可恢复) ──
+// 道法自然: 归档后对两个磁盘文件做二次清理, 防_mergeFromDisk回流
+// 反者道之动: save()可能把已归档账号写回磁盘, 此函数直接擦除
+function _cleanPurgedFromDisk(store) {
+  try {
+    const archPath = path.join(path.dirname(store._path), "_wam_purged.json");
+    if (!fs.existsSync(archPath)) return;
+    const purgedArr = JSON.parse(fs.readFileSync(archPath, "utf8"));
+    if (!Array.isArray(purgedArr) || purgedArr.length === 0) return;
+    const bl = new Set(purgedArr.map((a) => (a.email || "").toLowerCase()));
+    // 同步清理内存: 防止_mergeFromDisk回流后的内存污染再次写入磁盘
+    const memBefore = store.accounts.length;
+    store.accounts = store.accounts.filter((a) => {
+      const e = (a.email || "").toLowerCase();
+      if (bl.has(e)) return false;
+      if (((a.usage && a.usage.plan) || "").toLowerCase() === "free")
+        return false;
+      return true;
+    });
+    if (store.accounts.length < memBefore)
+      log(
+        `purge: mem_clean: ${memBefore}→${store.accounts.length} (-${memBefore - store.accounts.length})`,
+      );
+    // 同步清理两个磁盘文件
+    const targets = [store._path, store._sharedPath].filter(Boolean);
+    for (const p of targets) {
+      try {
+        if (!fs.existsSync(p)) continue;
+        const accs = JSON.parse(fs.readFileSync(p, "utf8"));
+        if (!Array.isArray(accs)) continue;
+        const cleaned = accs.filter((a) => {
+          const e = (a.email || "").toLowerCase();
+          if (bl.has(e)) return false;
+          if (((a.usage && a.usage.plan) || "").toLowerCase() === "free")
+            return false;
+          return true;
+        });
+        if (cleaned.length < accs.length) {
+          fs.writeFileSync(p, JSON.stringify(cleaned, null, 2), "utf8");
+          log(
+            `purge: disk_clean ${p.split(/[\\/]/).pop()}: ${accs.length}→${cleaned.length} (-${accs.length - cleaned.length})`,
+          );
+        }
+      } catch {}
+    }
+    // 内存+磁盘双清后再保存一次, 确保磁盘与内存同步且干净
+    try {
+      fs.writeFileSync(
+        store._path,
+        JSON.stringify(store.accounts, null, 2),
+        "utf8",
+      );
+    } catch {}
+    try {
+      if (store._sharedPath)
+        fs.writeFileSync(
+          store._sharedPath,
+          JSON.stringify(store.accounts, null, 2),
+          "utf8",
+        );
+    } catch {}
+  } catch (e) {
+    log(`purge: disk_clean error: ${e.message}`);
+  }
+}
+
 function _archivePurged(store, archived) {
   try {
     const archivePath = path.join(
@@ -2980,14 +4551,98 @@ function _archivePurged(store, archived) {
 async function switchToAccount(email, password) {
   log(`switch: ${email}`);
   const t0 = Date.now();
+  const emailKey = email.toLowerCase();
+
+  // ── v17.5 Level 2: Devin-only 账号 → 完整 Devin 链路 (跳过 Firebase) ──
+  // 账号 _authSystem='devin' 由 verify-gate / pool-tick / clearBlacklist 命令预先标记
+  // 流程: password → auth1_token (devinLogin) → sessionToken (WindsurfPostAuth) → injectAuth
+  const _devinAccIdx = _store
+    ? _store.accounts.findIndex((a) => a.email.toLowerCase() === emailKey)
+    : -1;
+  const _devinAcc = _devinAccIdx >= 0 ? _store.accounts[_devinAccIdx] : null;
+  if (_devinAcc && _devinAcc._authSystem === "devin") {
+    log(`switch: ${email} → Devin-only 链路`);
+    const ds = await _devinFullSwitch(email, password);
+    if (!ds.ok) {
+      log(
+        `switch FAIL (devin-${ds.stage}): ${ds.error} [${Date.now() - t0}ms]`,
+      );
+      return {
+        ok: false,
+        error: `Devin 切号失败 [${ds.stage}]: ${ds.error}`,
+        ms: Date.now() - t0,
+      };
+    }
+    // 持久化最新 Devin 元数据 — v17.5 补完+: 附加验证时戳 + 标记
+    _devinAcc._devinUserId = ds.userId;
+    _devinAcc._devinAccountId = ds.accountId;
+    _devinAcc._devinOrgId = ds.primaryOrgId;
+    _devinAcc._devinSessionAt = Date.now();
+    _devinAcc._devinVerified = true;
+    _devinAcc._lastVerified = Date.now();
+    // v17.8 道法自然: switch 成功 → 异步 fetchAccountQuota (不阻塞切号)
+    fetchAccountQuota(_devinAcc.email, _devinAcc.password)
+      .then(() => {
+        try {
+          _store.save();
+          refreshAll();
+        } catch {}
+      })
+      .catch(() => {});
+    try {
+      _store.save();
+    } catch {}
+    // 注入 sessionToken (Windsurf IDE 原生接受 devin-session-token$ 前缀)
+    const injectResult = await injectAuth(ds.sessionToken);
+    const ms = Date.now() - t0;
+    if (!injectResult.ok) {
+      // v17.14: inject 失败 → 失效 Devin 缓存 (可能 sessionToken 已过期)
+      _invalidateDevinCache(email);
+      log(
+        `switch FAIL inject (devin): ${JSON.stringify(injectResult.error)} [${ms}ms] · cache 已失效`,
+      );
+      return {
+        ok: false,
+        error: `Devin 注入失败: ${JSON.stringify(injectResult.error)}`,
+        ms,
+      };
+    }
+    log(
+      `switch OK (devin): ${injectResult.account} accountId=${ds.accountId.substring(0, 16)}... ${ms}ms`,
+    );
+    _lastSwitchTime = Date.now();
+    _writeInstanceClaim(email);
+    try {
+      fs.mkdirSync(WAM_DIR, { recursive: true });
+      fs.writeFileSync(
+        RESULT_FILE,
+        JSON.stringify({
+          ok: true,
+          ts: Date.now(),
+          email,
+          account: injectResult.account,
+          apiKey: (injectResult.apiKey || "").substring(0, 25) + "...",
+          sessionId: injectResult.sessionId,
+          _authSystem: "devin",
+          _devinAccountId: ds.accountId,
+        }),
+      );
+    } catch {}
+    return {
+      ok: true,
+      account: injectResult.account,
+      apiKey: injectResult.apiKey,
+      ms,
+      _authSystem: "devin",
+    };
+  }
 
   // ── 快速路径: 检查预热Token缓存 (道法自然: 弹药已备好, 一触即发) ──
   let idToken = null;
-  const emailKey = email.toLowerCase();
   if (
     _prewarmedToken &&
     _prewarmedToken.email === emailKey &&
-    Date.now() - _prewarmedToken.ts < TOKEN_CACHE_TTL
+    Date.now() - _prewarmedToken.ts < _getTokenCacheTtl()
   ) {
     idToken = _prewarmedToken.idToken;
     log(
@@ -3019,23 +4674,125 @@ async function switchToAccount(email, password) {
         _poolFailStreak.set(emailKey, fs0);
       }
       if (/INVALID|NOT_FOUND|DISABLED|WRONG/.test(err)) {
+        // v17.5 Level 2: Firebase INVALID 先试 Devin 完整链路
+        // 反者道之动: 新 Devin-only 账号首次切号即能识别并成功, 不必等 verify-gate 慢预热
+        try {
+          const ds = await _devinFullSwitch(email, password);
+          if (ds.ok) {
+            log(
+              `switch: ${email} Firebase INVALID 但 Devin 成功 (accountId=${(ds.accountId || "").substring(0, 16)}...) — 标记并注入`,
+            );
+            const idx2 = _store?.accounts.findIndex(
+              (a) => a.email.toLowerCase() === emailKey,
+            );
+            if (idx2 >= 0) {
+              const acc2 = _store.accounts[idx2];
+              acc2._authSystem = "devin";
+              acc2._devinUserId = ds.userId;
+              acc2._devinAccountId = ds.accountId;
+              acc2._devinOrgId = ds.primaryOrgId;
+              acc2._devinSessionAt = Date.now();
+              acc2._devinDetectedAt = Date.now();
+              // v17.5 补完+: 打验证标记, 供 getHealth/getBestIndex/UI 识别
+              acc2._devinVerified = true;
+              acc2._lastVerified = Date.now();
+              delete acc2._verifyFailed;
+              delete acc2._verifyFailedAt;
+              acc2._verifyFailedCount = 0;
+              delete acc2._switchFailed;
+              delete acc2._switchFailedAt;
+              acc2._switchFailedCount = 0;
+              // v17.8 道法自然: 异步 fetchAccountQuota 拿真实 plan (不阻塞注入)
+              fetchAccountQuota(acc2.email, acc2.password)
+                .then(() => {
+                  try {
+                    _store.save();
+                    refreshAll();
+                  } catch {}
+                })
+                .catch(() => {});
+              try {
+                _store.save();
+              } catch {}
+            }
+            const inj = await injectAuth(ds.sessionToken);
+            const ms2 = Date.now() - t0;
+            if (!inj.ok) {
+              log(
+                `switch FAIL inject (devin-fallback): ${JSON.stringify(inj.error)} [${ms2}ms]`,
+              );
+              return {
+                ok: false,
+                error: `Devin 注入失败: ${JSON.stringify(inj.error)}`,
+                ms: ms2,
+              };
+            }
+            log(
+              `switch OK (devin-fallback): ${inj.account} ${ms2}ms — 账号已标记 _authSystem=devin`,
+            );
+            _lastSwitchTime = Date.now();
+            _writeInstanceClaim(email);
+            try {
+              fs.mkdirSync(WAM_DIR, { recursive: true });
+              fs.writeFileSync(
+                RESULT_FILE,
+                JSON.stringify({
+                  ok: true,
+                  ts: Date.now(),
+                  email,
+                  account: inj.account,
+                  apiKey: (inj.apiKey || "").substring(0, 25) + "...",
+                  sessionId: inj.sessionId,
+                  _authSystem: "devin",
+                  _devinAccountId: ds.accountId,
+                }),
+              );
+            } catch {}
+            return {
+              ok: true,
+              account: inj.account,
+              apiKey: inj.apiKey,
+              ms: ms2,
+              _authSystem: "devin",
+            };
+          }
+        } catch (de) {
+          log(`switch: Devin fallback 探测异常 ${email} (${de.message || de})`);
+        }
+        // v17.3 道法自然: switchToAccount 第二处死刑也需缓冲 (与 verify-gate 一致)
+        // 反者道之动: 单次失败不归档, 连续3次才归档 — 给网络/限流/暂时同步留机会
         const idx = _store?.accounts.findIndex(
           (a) => a.email.toLowerCase() === emailKey,
         );
         if (idx >= 0) {
           const deadAcc = _store.accounts[idx];
-          log(`switch: archiving dead account [${idx}] ${email} (${err})`);
-          _archivePurged(_store, [
-            {
-              ...deadAcc,
-              _purgeReason: `switch_dead: ${err}`,
-              _purgedAt: Date.now(),
-            },
-          ]);
-          _store.remove(idx);
-          vscode.window.showWarningMessage(
-            `WAM: 已归档无效账号 ${email} (${err})，可从_wam_purged.json恢复`,
-          );
+          deadAcc._switchFailed = err;
+          deadAcc._switchFailedAt = Date.now();
+          deadAcc._switchFailedCount = (deadAcc._switchFailedCount || 0) + 1;
+          if (deadAcc._switchFailedCount >= 3) {
+            log(
+              `switch: archiving dead account [${idx}] ${email} (${err}) 连续${deadAcc._switchFailedCount}次`,
+            );
+            _archivePurged(_store, [
+              {
+                ...deadAcc,
+                _purgeReason: `switch_dead_after_retries: ${err}`,
+                _purgedAt: Date.now(),
+              },
+            ]);
+            _store.remove(idx);
+            vscode.window.showWarningMessage(
+              `WAM: 已归档无效账号 ${email} (${err})连续3次，可用 "WAM: 从归档恢复" 找回`,
+            );
+          } else {
+            log(
+              `switch: ${email} 登录失败 ${deadAcc._switchFailedCount}/3 (${err}), 保留`,
+            );
+            _store.save();
+            vscode.window.showWarningMessage(
+              `WAM: ${email} 登录失败 ${deadAcc._switchFailedCount}/3 (${err}) — 保留池中`,
+            );
+          }
         }
       }
       return {
@@ -3048,7 +4805,7 @@ async function switchToAccount(email, password) {
     idToken = loginResult.idToken;
     _tokenCache.set(emailKey, {
       idToken,
-      expiresAt: Date.now() + TOKEN_CACHE_TTL,
+      expiresAt: Date.now() + _getTokenCacheTtl(),
     });
     _tokenCacheDirty = true;
     _saveTokenCache();
@@ -3099,12 +4856,46 @@ async function switchToAccount(email, password) {
 
 // ── v11: Token池预热引擎 — 天下之至柔，驰骋天下之至坚 ──
 // v8原版只预热1个候选 → v11预热top 3候选, 任一命中即<1s切号
-// 候选变化时旧token仍在_tokenCache中可用, 不浪费
+// v17.16 秒切引擎: Devin 账号预热 sessionToken · 切号 Devin cache HIT → 1300ms
+//   逆流本源: 切号耗时 = token准备 + inject · cache HIT 时 token准备=0 · 只剩 inject
+//   无为而无不为: 预热失败不阻塞 · 异步后台 · 切号时自然 cache HIT
 async function _prewarmCandidateToken(candidateIndex) {
   if (candidateIndex < 0 || !_store) return;
   const acc = _store.get(candidateIndex);
   if (!acc || !acc.password) return;
   const emailKey = acc.email.toLowerCase();
+
+  // v17.16 Devin 分支: 秒切引擎 · 预热 sessionToken 覆盖 _devinSessionCache
+  if (acc._authSystem === "devin") {
+    const devinCached = _getDevinCached(emailKey);
+    if (devinCached) {
+      log(
+        `🔥 prewarm: ${acc.email.substring(0, 20)} Devin session cached (expires ${Math.round((devinCached.expiresAt - Date.now()) / 60000)}min)`,
+      );
+      _prewarmPool(candidateIndex).catch(() => {});
+      return;
+    }
+    // 冷启: 后台填充 Devin cache · 下次切号即 HIT (跳过 3000ms HTTPS 往返)
+    log(`🔥 prewarm: firing Devin for ${acc.email.substring(0, 20)}...`);
+    try {
+      const r = await _devinFullSwitch(acc.email, acc.password);
+      if (r.ok) {
+        log(
+          `🔥 prewarm: Devin OK for ${acc.email.substring(0, 20)} (sessionToken cached · 秒切就绪)`,
+        );
+      } else {
+        log(
+          `🔥 prewarm: Devin FAIL for ${acc.email.substring(0, 20)}: ${r.stage}/${r.error}`,
+        );
+      }
+    } catch (e) {
+      log(
+        `🔥 prewarm: Devin error ${acc.email.substring(0, 20)}: ${e.message}`,
+      );
+    }
+    _prewarmPool(candidateIndex).catch(() => {});
+    return;
+  }
 
   // 如果已有有效缓存, 不重复预热
   const cached = _tokenCache.get(emailKey);
@@ -3113,7 +4904,7 @@ async function _prewarmCandidateToken(candidateIndex) {
     _prewarmedToken = {
       email: emailKey,
       idToken: cached.idToken,
-      ts: cached.expiresAt - TOKEN_CACHE_TTL,
+      ts: cached.expiresAt - _getTokenCacheTtl(),
     };
     log(`🔥 prewarm: ${acc.email.substring(0, 20)} already cached`);
     // v11: 即使主候选已缓存, 仍异步预热额外候选
@@ -3133,7 +4924,7 @@ async function _prewarmCandidateToken(candidateIndex) {
       };
       _tokenCache.set(emailKey, {
         idToken: loginResult.idToken,
-        expiresAt: Date.now() + TOKEN_CACHE_TTL,
+        expiresAt: Date.now() + _getTokenCacheTtl(),
       });
       _tokenCacheDirty = true;
       log(
@@ -3177,7 +4968,7 @@ async function _prewarmPool(excludeIndex) {
       if (lr.ok) {
         _tokenCache.set(ek, {
           idToken: lr.idToken,
-          expiresAt: Date.now() + TOKEN_CACHE_TTL,
+          expiresAt: Date.now() + _getTokenCacheTtl(),
         });
         _tokenCacheDirty = true;
         warmed++;
@@ -3194,41 +4985,14 @@ async function _prewarmPool(excludeIndex) {
 // 效果: 任意手动切号 → 必然cache HIT → 跳过3-4s Firebase登录 → inject-only切号
 // 节奏: N个账号/50分钟TTL → 每~(50*60/N)秒刷新1个 → CPU近零·网络极低
 // 道法自然: 水不等溃堤才流, Token不等切号才取 — 始终备好, 一触即发
-const TOKEN_POOL_BURST_MS = 5000; // 冲刺模式: 5秒/轮 (前3分钟快速填充)
-const TOKEN_POOL_CRUISE_MS = 45000; // 巡航模式: 45秒/轮 (v13.2: 加速恢复·水流不息)
-const TOKEN_POOL_BURST_DURATION = 180000; // 冲刺持续3分钟
-const TOKEN_POOL_MARGIN = 600000; // 提前10分钟续期
-const POOL_PARALLEL_BURST = 3; // v13: 冲刺并行度 (64÷3≈22 ticks×5s≈110s填满 vs 串行320s)
-const POOL_PARALLEL_CRUISE = 1; // v13: 巡航并行度 (低压维持)
+// TOKEN_POOL_* / POOL_* 常量 → getter化 (v17.1 去芜留菁)
 let _tokenPoolStartTs = 0; // 活水池启动时间
 let _tokenPoolTickCount = 0; // v13: pool自己的tick计数器
 const _tokenPoolBlacklist = new Set(); // 永久失败账号 (INVALID_PASSWORD等)
 const _poolFailStreak = new Map(); // email -> {count, lastFail} 连续网络失败计数
-const POOL_TEMP_BAN_THRESHOLD = 3; // 连续失败N次后临时拉黑
-const POOL_TEMP_BAN_DURATION = 900000; // 临时拉黑15分钟
-// v15.1: 全局断路器 — 当连续不同账号都all_channels_failed时暂停池, 避免无效锤击
-let _poolCircuitBreakerUntil = 0; // 断路器截止时间 (0=正常运行)
-let _poolConsecutiveGlobalFails = 0; // 连续全局失败计数 (跨账号)
-const POOL_CIRCUIT_BREAKER_THRESHOLD = 3; // 连续N个不同账号失败 → 触发断路
-const POOL_CIRCUIT_BREAKER_DURATION = 300000; // 断路5分钟 (等网络恢复)
 
 async function _tokenPoolTick() {
   if (!_store || _switching || !isWamMode()) return;
-  // v15.1: 全局断路器 — 网络不通时暂停, 不无谓消耗
-  if (_poolCircuitBreakerUntil > Date.now()) {
-    const remainSec = Math.round(
-      (_poolCircuitBreakerUntil - Date.now()) / 1000,
-    );
-    if (_tokenPoolTickCount % 5 === 0)
-      log(`🔥 pool: circuit breaker active, ${remainSec}s remaining`);
-    _tokenPoolTickCount++;
-    return;
-  }
-  if (_poolCircuitBreakerUntil > 0 && Date.now() >= _poolCircuitBreakerUntil) {
-    _poolCircuitBreakerUntil = 0;
-    _poolConsecutiveGlobalFails = 0;
-    log("🔥 pool: circuit breaker released — 水到渠成");
-  }
   const accounts = _store.accounts;
   if (!accounts || accounts.length === 0) return;
 
@@ -3246,35 +5010,43 @@ async function _tokenPoolTick() {
     const streak = _poolFailStreak.get(ek);
     if (
       streak &&
-      streak.count >= POOL_TEMP_BAN_THRESHOLD &&
-      Date.now() - streak.lastFail < POOL_TEMP_BAN_DURATION
+      streak.count >= _getPoolTempBanThreshold() &&
+      Date.now() - streak.lastFail < _getPoolTempBanDuration()
     )
       continue;
     if (
       streak &&
-      streak.count >= POOL_TEMP_BAN_THRESHOLD &&
-      Date.now() - streak.lastFail >= POOL_TEMP_BAN_DURATION
+      streak.count >= _getPoolTempBanThreshold() &&
+      Date.now() - streak.lastFail >= _getPoolTempBanDuration()
     )
       _poolFailStreak.delete(ek); // 解禁
-    const cached = _tokenCache.get(ek);
+    // v17.16 秒切引擎: Devin-only 账号走 sessionToken 缓存路径 · 不再 continue
+    //   逆流本源: 让 Devin 账号也永远 cache HIT · 切号 ~1300ms
+    const isDevin = acc._authSystem === "devin";
+    const cached = isDevin ? _getDevinCached(ek) : _tokenCache.get(ek);
     if (cached && cached.expiresAt > Date.now()) totalCached++;
     let urgency = 0;
     if (!cached || cached.expiresAt <= Date.now()) {
       urgency = 3; // 无缓存或已过期: 最紧急
-    } else if (cached.expiresAt < Date.now() + TOKEN_POOL_MARGIN) {
+    } else if (cached.expiresAt < Date.now() + _getTokenPoolMargin()) {
       urgency = 2; // 即将过期: 紧急
-    } else if (cached.expiresAt < Date.now() + TOKEN_CACHE_TTL * 0.6) {
+    } else if (cached.expiresAt < Date.now() + _getTokenCacheTtl() * 0.6) {
       urgency = 1; // 已过半: 低优先
     } else {
       continue; // 充足
     }
-    candidates.push({ idx: i, urgency, exp: cached ? cached.expiresAt : 0 });
+    candidates.push({
+      idx: i,
+      urgency,
+      exp: cached ? cached.expiresAt : 0,
+      isDevin,
+    });
   }
 
   _tokenPoolTickCount++;
   // v13: pool自己的周期报告 (每10 ticks或填满时)
   const isBurstPhase =
-    Date.now() - _tokenPoolStartTs < TOKEN_POOL_BURST_DURATION;
+    Date.now() - _tokenPoolStartTs < _getTokenPoolBurstDuration();
   if (
     _tokenPoolTickCount % 10 === 0 ||
     _tokenPoolTickCount <= 3 ||
@@ -3291,25 +5063,47 @@ async function _tokenPoolTick() {
   candidates.sort((a, b) => b.urgency - a.urgency || a.exp - b.exp);
 
   // v13: 冲刺期多路并发, 巡航期单路 — 上善若水, 水善利万物而不争
-  const isBurst = Date.now() - _tokenPoolStartTs < TOKEN_POOL_BURST_DURATION;
-  const parallel = isBurst ? POOL_PARALLEL_BURST : POOL_PARALLEL_CRUISE;
+  const isBurst = Date.now() - _tokenPoolStartTs < _getTokenPoolBurstDuration();
+  const parallel = isBurst ? _getPoolParallelBurst() : _getPoolParallelCruise();
   const batch = candidates.slice(0, parallel);
 
   await Promise.allSettled(
-    batch.map(async ({ idx }) => {
+    batch.map(async ({ idx, isDevin }) => {
       if (_switching) return;
       const acc = accounts[idx];
       const ek = acc.email.toLowerCase();
+      // v17.16 秒切引擎: Devin 账号走 sessionToken 预热 · 切号 cache HIT → 1300ms
+      if (isDevin) {
+        try {
+          const r = await _devinFullSwitch(acc.email, acc.password);
+          if (r.ok) {
+            _poolFailStreak.delete(ek);
+            log(`🔥 pool: +${acc.email.substring(0, 20)} (Devin sessionToken)`);
+          } else {
+            const fs0 = _poolFailStreak.get(ek) || { count: 0, lastFail: 0 };
+            fs0.count++;
+            fs0.lastFail = Date.now();
+            _poolFailStreak.set(ek, fs0);
+            log(
+              `🔥 pool: Devin fail ${acc.email.substring(0, 20)} (${r.stage}/${r.error}) [×${fs0.count}]`,
+            );
+          }
+        } catch (e) {
+          log(
+            `🔥 pool: Devin threw ${acc.email.substring(0, 20)} (${e.message || e})`,
+          );
+        }
+        return;
+      }
       try {
         const lr = await firebaseLogin(acc.email, acc.password);
         if (lr.ok) {
           _tokenCache.set(ek, {
             idToken: lr.idToken,
-            expiresAt: Date.now() + TOKEN_CACHE_TTL,
+            expiresAt: Date.now() + _getTokenCacheTtl(),
           });
           _tokenCacheDirty = true;
           _poolFailStreak.delete(ek); // 成功则清除失败计数
-          _poolConsecutiveGlobalFails = 0; // v15.1: 有一个成功→断路器复位
           if (idx === _predictiveCandidate) {
             _prewarmedToken = {
               email: ek,
@@ -3318,21 +5112,25 @@ async function _tokenPoolTick() {
             };
           }
         } else {
-          const errMsg = lr.error || "";
-          // v15.1: TOO_MANY_ATTEMPTS = Firebase IP级别限流 → 立即触发断路器
-          if (/TOO_MANY_ATTEMPTS/.test(errMsg)) {
-            log(
-              `🔥 pool: Firebase rate-limit detected! triggering circuit breaker`,
-            );
-            _poolCircuitBreakerUntil =
-              Date.now() + POOL_CIRCUIT_BREAKER_DURATION;
-            return; // 不计入per-account失败
-          }
           // v13: 记录失败原因 (以前静默吞掉 → 池为什么不填无从诊断)
-          if (/INVALID|NOT_FOUND|DISABLED|WRONG/.test(errMsg)) {
+          if (/INVALID|NOT_FOUND|DISABLED|WRONG/.test(lr.error || "")) {
+            // v17.5: 拉黑前探测 Devin-only — 道法自然·不让 Devin 账号永久殉葬
+            try {
+              const dv = await _devinLogin(acc.email, acc.password);
+              if (dv.ok) {
+                acc._authSystem = "devin";
+                acc._devinUserId = dv.userId;
+                acc._devinDetectedAt = Date.now();
+                if (_store && typeof _store.save === "function") _store.save();
+                log(
+                  `🔥 pool: ${acc.email.substring(0, 20)} 标记 Devin-only (uid=${dv.userId}) — 不拉黑, 等待 Devin 切号支持`,
+                );
+                return; // 跳过拉黑
+              }
+            } catch {}
             _tokenPoolBlacklist.add(ek);
             log(
-              `🔥 pool: blacklisted ${acc.email.substring(0, 20)} (${errMsg})`,
+              `🔥 pool: blacklisted ${acc.email.substring(0, 20)} (${lr.error})`,
             );
           } else {
             // v13.4: 连续网络失败计数 — 多言数穷不如守中
@@ -3340,26 +5138,13 @@ async function _tokenPoolTick() {
             fs0.count++;
             fs0.lastFail = Date.now();
             _poolFailStreak.set(ek, fs0);
-            // v15.1: 全局断路器 — all_channels_failed说明网络层问题, 非账号问题
-            if (/all_channels_failed/.test(errMsg)) {
-              _poolConsecutiveGlobalFails++;
-              if (
-                _poolConsecutiveGlobalFails >= POOL_CIRCUIT_BREAKER_THRESHOLD
-              ) {
-                _poolCircuitBreakerUntil =
-                  Date.now() + POOL_CIRCUIT_BREAKER_DURATION;
-                log(
-                  `🔥 pool: CIRCUIT BREAKER — ${_poolConsecutiveGlobalFails} consecutive all_channels_failed, pausing ${POOL_CIRCUIT_BREAKER_DURATION / 60000}min`,
-                );
-              }
-            }
-            if (fs0.count === POOL_TEMP_BAN_THRESHOLD) {
+            if (fs0.count === _getPoolTempBanThreshold()) {
               log(
-                `🔥 pool: temp-ban ${acc.email.substring(0, 20)} (×${fs0.count} consecutive fails, ${POOL_TEMP_BAN_DURATION / 60000}min)`,
+                `🔥 pool: temp-ban ${acc.email.substring(0, 20)} (×${fs0.count} consecutive fails, ${_getPoolTempBanDuration() / 60000}min)`,
               );
             } else {
               log(
-                `🔥 pool: login fail ${acc.email.substring(0, 20)} (${errMsg || "unknown"}) [×${fs0.count}]`,
+                `🔥 pool: login fail ${acc.email.substring(0, 20)} (${lr.error || "unknown"}) [×${fs0.count}]`,
               );
             }
           }
@@ -3375,36 +5160,454 @@ async function _tokenPoolTick() {
   _saveTokenCache();
 }
 
-// v13.1: Token缓存持久化 — 地承水, 重启不失
+// v13.1 + v17.14: Token 缓存持久化 (idToken + devinSession 双 bucket)
+// 文件 schema: 兼容旧版纯扁平 idToken map, 以及新版 { _v: 2, idTokens: {...}, devinSessions: {...} }
 function _loadTokenCache() {
   try {
     const raw = fs.readFileSync(TOKEN_CACHE_FILE, "utf-8");
-    const entries = JSON.parse(raw);
-    let loaded = 0;
+    const parsed = JSON.parse(raw);
+    let loadedIdToken = 0;
+    let loadedDevin = 0;
     const now = Date.now();
-    for (const [email, data] of Object.entries(entries)) {
-      if (data && data.expiresAt > now && data.idToken) {
-        _tokenCache.set(email, data);
-        loaded++;
+    // v2 新格式 (包含 devinSessions)
+    if (parsed && typeof parsed === "object" && parsed._v === 2) {
+      const idTokens = parsed.idTokens || {};
+      for (const [email, data] of Object.entries(idTokens)) {
+        if (data && data.expiresAt > now && data.idToken) {
+          _tokenCache.set(email, data);
+          loadedIdToken++;
+        }
+      }
+      const devinSessions = parsed.devinSessions || {};
+      for (const [email, data] of Object.entries(devinSessions)) {
+        if (data && data.expiresAt > now && data.sessionToken) {
+          _devinSessionCache.set(email, data);
+          loadedDevin++;
+        }
+      }
+    } else {
+      // v1 旧格式 (扁平 idToken map) · 保持兼容
+      for (const [email, data] of Object.entries(parsed)) {
+        if (data && data.expiresAt > now && data.idToken) {
+          _tokenCache.set(email, data);
+          loadedIdToken++;
+        }
       }
     }
-    if (loaded > 0) {
-      log(`🔥 pool: loaded ${loaded} tokens from disk (survive restart)`);
-      // 有持久缓存 → 跳过冲刺, 直接巡航
-      _tokenPoolStartTs = Date.now() - TOKEN_POOL_BURST_DURATION;
+    if (loadedIdToken > 0 || loadedDevin > 0) {
+      log(
+        `🔥 pool: loaded ${loadedIdToken} idTokens + ${loadedDevin} devin sessions from disk (survive restart)`,
+      );
+      _tokenPoolStartTs = Date.now() - _getTokenPoolBurstDuration();
     }
   } catch {}
 }
 
 function _saveTokenCache() {
-  if (!_tokenCacheDirty) return;
+  if (!_tokenCacheDirty && !_devinCacheDirty) return;
   try {
-    const obj = {};
-    for (const [k, v] of _tokenCache) obj[k] = v;
+    const idTokens = {};
+    for (const [k, v] of _tokenCache) idTokens[k] = v;
+    const devinSessions = {};
+    for (const [k, v] of _devinSessionCache) devinSessions[k] = v;
+    const obj = { _v: 2, idTokens, devinSessions };
     fs.mkdirSync(WAM_DIR, { recursive: true });
     fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify(obj));
     _tokenCacheDirty = false;
+    _devinCacheDirty = false;
   } catch {}
+}
+
+// ── v17.10 太上·不知有之: autoUpdate 自动推送新版本 (各扩展无感接收后续之新法) ──
+// 源支持: SMB/本地路径 (\\host\share\bundle 或 D:\...) · HTTPS URL
+// 流程: 读远端 package.json → 对比版本 → 下载 extension.js + package.json → 备份 → 原子 rename
+// 安全: source 默认空 · 用户必须显式配置才启用 · 默认静默 · 备份可回滚
+// 道法自然 · 无为而无不为 · 太上不知有之
+let _autoUpdateTimer = null;
+let _autoUpdateLastCheck = 0;
+let _autoUpdateLastResult = null;
+
+function _compareVersions(a, b) {
+  // 返回 >0 if a>b, <0 if a<b, 0 if equal · 按 semver 三段式
+  const pa = String(a || "")
+    .split(/[.-]/)
+    .map((x) => parseInt(x, 10) || 0);
+  const pb = String(b || "")
+    .split(/[.-]/)
+    .map((x) => parseInt(x, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    const diff = (pa[i] || 0) - (pb[i] || 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+function _autoUpdateJoinPath(source, filename) {
+  const isHttp = /^https?:\/\//i.test(source);
+  if (isHttp) {
+    return source.endsWith("/") ? source + filename : source + "/" + filename;
+  }
+  // 本地/SMB 路径: 用 path.join 规范化
+  return path.join(source, filename);
+}
+
+// v17.17 公网天网: jsDelivr 四镜像故障转移 · DNS 污染自感知所规避
+// China DNS 偶将 cdn.jsdelivr.net 污染至 8.7.198.46 (失效 IP) · fastly/gcore/testingcf 均通
+// 顺序: 用户 source 优先 → 同域名 → 其他镜像 (切换无感·打一次成功即返)
+const _JSDELIVR_MIRRORS = [
+  "cdn.jsdelivr.net",
+  "fastly.jsdelivr.net",
+  "gcore.jsdelivr.net",
+  "testingcf.jsdelivr.net",
+];
+function _expandJsdelivrSources(source) {
+  // 非 HTTP 或非 jsDelivr 域名 → 原样返回 (不扩展)
+  const m = source.match(/^(https?):\/\/([^/]+)(\/.*)?$/i);
+  if (!m) return [source];
+  const proto = m[1];
+  const host = m[2].toLowerCase();
+  const rest = m[3] || "/";
+  if (!_JSDELIVR_MIRRORS.includes(host)) return [source];
+  // 当前域名优先 · 其他镜像作 fallback
+  const ordered = [host, ..._JSDELIVR_MIRRORS.filter((h) => h !== host)];
+  return ordered.map((h) => `${proto}://${h}${rest}`);
+}
+
+// v17.14 公网闭环: 支持 301/302/307/308 重定向 (GitHub Releases `/latest/download/` 依赖 302)
+async function _autoUpdateHttpGet(url, asBuffer = false, redirectCount = 0) {
+  const MAX_REDIRECTS = 5;
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { timeout: 30000 }, (resp) => {
+      const status = resp.statusCode || 0;
+      // 重定向
+      if ([301, 302, 303, 307, 308].includes(status) && resp.headers.location) {
+        resp.resume(); // 丢弃 body
+        if (redirectCount >= MAX_REDIRECTS) {
+          reject(new Error(`HTTP redirect loop > ${MAX_REDIRECTS}`));
+          return;
+        }
+        const next = new URL(resp.headers.location, url).toString();
+        log(`autoUpdate: ${status} redirect → ${next.substring(0, 80)}`);
+        _autoUpdateHttpGet(next, asBuffer, redirectCount + 1)
+          .then(resolve)
+          .catch(reject);
+        return;
+      }
+      if (status >= 400) {
+        reject(new Error(`HTTP ${status}`));
+        resp.resume();
+        return;
+      }
+      const chunks = [];
+      resp.on("data", (c) => chunks.push(c));
+      resp.on("end", () => {
+        const buf = Buffer.concat(chunks);
+        resolve(asBuffer ? buf : buf.toString("utf8"));
+      });
+      resp.on("error", reject);
+    });
+    req.on("error", reject);
+    req.on("timeout", () => {
+      req.destroy();
+      reject(new Error("HTTP timeout"));
+    });
+  });
+}
+
+// v17.17: jsDelivr 镜像 fallback · 对 jsDelivr 域名源自动展开多个镜像顺次尝试·其他 source (SMB/非 jsDelivr HTTPS) 原样返回
+async function _autoUpdateFetchTextHttp(source, filename) {
+  const candidates = _expandJsdelivrSources(source);
+  let lastErr;
+  for (let i = 0; i < candidates.length; i++) {
+    const src = candidates[i];
+    try {
+      const text = await _autoUpdateHttpGet(
+        _autoUpdateJoinPath(src, filename),
+        false,
+      );
+      if (candidates.length > 1 && i > 0) {
+        try {
+          log(`autoUpdate: fallback ok via ${new URL(src).host} (${filename})`);
+        } catch {}
+      }
+      return text;
+    } catch (e) {
+      lastErr = e;
+      if (candidates.length > 1) {
+        try {
+          log(
+            `autoUpdate: ${new URL(src).host} fail ${(e && e.message ? e.message : String(e)).split("\n")[0].substring(0, 80)}`,
+          );
+        } catch {}
+      }
+    }
+  }
+  throw lastErr || new Error("all jsDelivr mirrors failed");
+}
+async function _autoUpdateFetchBytesHttp(source, filename) {
+  const candidates = _expandJsdelivrSources(source);
+  let lastErr;
+  for (let i = 0; i < candidates.length; i++) {
+    const src = candidates[i];
+    try {
+      const buf = await _autoUpdateHttpGet(
+        _autoUpdateJoinPath(src, filename),
+        true,
+      );
+      if (candidates.length > 1 && i > 0) {
+        try {
+          log(`autoUpdate: fallback ok via ${new URL(src).host} (${filename})`);
+        } catch {}
+      }
+      return buf;
+    } catch (e) {
+      lastErr = e;
+      if (candidates.length > 1) {
+        try {
+          log(
+            `autoUpdate: ${new URL(src).host} fail ${(e && e.message ? e.message : String(e)).split("\n")[0].substring(0, 80)}`,
+          );
+        } catch {}
+      }
+    }
+  }
+  throw lastErr || new Error("all jsDelivr mirrors failed");
+}
+
+async function _autoUpdateReadJson(source, filename) {
+  const isHttp = /^https?:\/\//i.test(source);
+  if (isHttp) {
+    const text = await _autoUpdateFetchTextHttp(source, filename);
+    return JSON.parse(text);
+  }
+  // SMB/本地: Node.js fs.readFileSync 原生支持 \\host\share\path
+  const full = _autoUpdateJoinPath(source, filename);
+  const raw = fs.readFileSync(full, "utf8");
+  // 去除 UTF-8 BOM
+  const clean = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+  return JSON.parse(clean);
+}
+
+async function _autoUpdateReadBytes(source, filename) {
+  const isHttp = /^https?:\/\//i.test(source);
+  if (isHttp) {
+    return await _autoUpdateFetchBytesHttp(source, filename);
+  }
+  const full = _autoUpdateJoinPath(source, filename);
+  return fs.readFileSync(full);
+}
+
+async function _autoUpdateCheck(manual = false) {
+  try {
+    if (!_getAutoUpdateEnabled() && !manual) {
+      return { ok: false, reason: "disabled" };
+    }
+    const source = _getAutoUpdateSource();
+    if (!source) {
+      return { ok: false, reason: "no_source" };
+    }
+    _autoUpdateLastCheck = Date.now();
+    log(`autoUpdate: 检查 ${source}`);
+
+    // Step 1: 读远端 package.json 拿版本号
+    const remotePkg = await _autoUpdateReadJson(source, "package.json");
+    if (!remotePkg || !remotePkg.version) {
+      _autoUpdateLastResult = { ok: false, reason: "remote_no_version" };
+      return _autoUpdateLastResult;
+    }
+    const localVer = WAM_VERSION;
+    const remoteVer = remotePkg.version;
+    const cmp = _compareVersions(remoteVer, localVer);
+    if (cmp <= 0) {
+      log(`autoUpdate: 本地 v${localVer} 已是最新 (远端 v${remoteVer})`);
+      _autoUpdateLastResult = {
+        ok: true,
+        updated: false,
+        localVer,
+        remoteVer,
+      };
+      return _autoUpdateLastResult;
+    }
+
+    log(`autoUpdate: 发现新版本 v${remoteVer} (当前 v${localVer}) · 下载中`);
+
+    // Step 2: 下载 extension.js 字节
+    const extBytes = await _autoUpdateReadBytes(source, "extension.js");
+    if (!extBytes || extBytes.length < 100000) {
+      log(`autoUpdate: extension.js 大小异常 ${extBytes?.length || 0}B · 取消`);
+      _autoUpdateLastResult = {
+        ok: false,
+        reason: "ext_size_bad",
+        size: extBytes?.length || 0,
+      };
+      return _autoUpdateLastResult;
+    }
+
+    // Step 3: 备份当前 · 原子写入新版本
+    const extPath = path.join(__dirname, "extension.js");
+    const pkgPath = path.join(__dirname, "package.json");
+    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const bakExt = `${extPath}.bak_autoUpdate_v${localVer}_${ts}`;
+    const bakPkg = `${pkgPath}.bak_autoUpdate_v${localVer}_${ts}`;
+    try {
+      fs.copyFileSync(extPath, bakExt);
+      fs.copyFileSync(pkgPath, bakPkg);
+    } catch (e) {
+      log(`autoUpdate: 备份失败 ${e.message} · 放弃更新 (安全优先)`);
+      _autoUpdateLastResult = { ok: false, reason: "backup_failed" };
+      return _autoUpdateLastResult;
+    }
+    // 原子: 先写 tmp 再 rename (同目录 rename 原子)
+    fs.writeFileSync(extPath + ".tmp", extBytes);
+    fs.writeFileSync(pkgPath + ".tmp", JSON.stringify(remotePkg, null, 2));
+    fs.renameSync(extPath + ".tmp", extPath);
+    fs.renameSync(pkgPath + ".tmp", pkgPath);
+
+    // Step 4: 清理超过 3 份的旧 autoUpdate 备份 (自我治愈)
+    try {
+      const dir = path.dirname(extPath);
+      const baks = fs
+        .readdirSync(dir)
+        .filter((n) => n.startsWith("extension.js.bak_autoUpdate_"))
+        .map((n) => ({
+          name: n,
+          full: path.join(dir, n),
+          mtime: fs.statSync(path.join(dir, n)).mtimeMs,
+        }))
+        .sort((a, b) => b.mtime - a.mtime);
+      for (const b of baks.slice(3)) {
+        try {
+          fs.unlinkSync(b.full);
+        } catch {}
+      }
+    } catch {}
+
+    log(`autoUpdate: ✓ 更新到 v${remoteVer} · 下次重载 Windsurf 自动生效`);
+    if (_getAutoUpdateNotifyUser() || manual) {
+      vscode.window.showInformationMessage(
+        `WAM 已更新到 v${remoteVer} (当前进程 v${localVer}) · 下次重启 Windsurf 自动生效`,
+      );
+    }
+    _autoUpdateLastResult = {
+      ok: true,
+      updated: true,
+      localVer,
+      remoteVer,
+      bakExt: path.basename(bakExt),
+    };
+    return _autoUpdateLastResult;
+  } catch (e) {
+    log(`autoUpdate: 失败 ${e.message}`);
+    _autoUpdateLastResult = { ok: false, reason: "error", error: e.message };
+    return _autoUpdateLastResult;
+  }
+}
+
+function _startAutoUpdate() {
+  _stopAutoUpdate();
+  if (!_getAutoUpdateEnabled()) return;
+  const source = _getAutoUpdateSource();
+  if (!source) {
+    log(
+      "autoUpdate: 未配置 source 且 autoDiscover=false · 跳过 (开启 wam.autoUpdate.autoDiscover 即可零配置享公网)",
+    );
+    return;
+  }
+  // 启动后延迟首次检查
+  setTimeout(
+    () => _autoUpdateCheck().catch(() => {}),
+    _getAutoUpdateStartDelayMs(),
+  );
+  // 定时检查
+  _autoUpdateTimer = setInterval(
+    () => _autoUpdateCheck().catch(() => {}),
+    _getAutoUpdateCheckIntervalMs(),
+  );
+  log(
+    `autoUpdate: 启用 · source=${source} · 间隔=${Math.round(_getAutoUpdateCheckIntervalMs() / 60000)}min`,
+  );
+}
+
+function _stopAutoUpdate() {
+  if (_autoUpdateTimer) {
+    clearInterval(_autoUpdateTimer);
+    _autoUpdateTimer = null;
+  }
+}
+
+// ── v17.12 太上·不知有之: UI 按钮完全内化为自动定时器 ──────────────
+// 验证清理按钮 → 每 6h 自动 verifyAndPurgeExpired (启动 2min 后首次)
+// 刷新有效期按钮 → 每 12h 自动 scanMissingExpiry (启动 5min 后首次)
+// 道法自然 · 无为而无不为 · 用户如披褐走路, 而功能自在怀玉之内
+let _autoVerifyFirstTimer = null;
+let _autoVerifyIntervalTimer = null;
+let _autoExpiryFirstTimer = null;
+let _autoExpiryIntervalTimer = null;
+
+function _startAutoVerify() {
+  _stopAutoVerify();
+  const firstDelay = 120000; // 启动后 2 分钟, 避免冷启动抖动
+  const period = 6 * 3600 * 1000; // 6 小时
+  const runOnce = async () => {
+    try {
+      if (!_store || _mode !== "wam") return;
+      log("autoVerify: 6h 周期自检开始 (太上不知有之)");
+      await verifyAndPurgeExpired(_store);
+      refreshAll();
+      log("autoVerify: 周期自检完成");
+    } catch (e) {
+      log("autoVerify error: " + (e && e.message ? e.message : String(e)));
+    }
+  };
+  _autoVerifyFirstTimer = setTimeout(async () => {
+    await runOnce();
+    _autoVerifyIntervalTimer = setInterval(runOnce, period);
+  }, firstDelay);
+  log("autoVerify: 已内化 (首次 " + firstDelay / 1000 + "s 后, 之后 6h 周期)");
+}
+
+function _stopAutoVerify() {
+  if (_autoVerifyFirstTimer) {
+    clearTimeout(_autoVerifyFirstTimer);
+    _autoVerifyFirstTimer = null;
+  }
+  if (_autoVerifyIntervalTimer) {
+    clearInterval(_autoVerifyIntervalTimer);
+    _autoVerifyIntervalTimer = null;
+  }
+}
+
+function _startAutoExpiry() {
+  _stopAutoExpiry();
+  const firstDelay = 300000; // 启动后 5 分钟
+  const period = 12 * 3600 * 1000; // 12 小时
+  const runOnce = async () => {
+    try {
+      if (!_store || _mode !== "wam") return;
+      log("autoExpiry: 12h 周期有效期补齐开始 (太上不知有之)");
+      await scanMissingExpiry();
+      refreshAll();
+      log("autoExpiry: 周期有效期补齐完成");
+    } catch (e) {
+      log("autoExpiry error: " + (e && e.message ? e.message : String(e)));
+    }
+  };
+  _autoExpiryFirstTimer = setTimeout(async () => {
+    await runOnce();
+    _autoExpiryIntervalTimer = setInterval(runOnce, period);
+  }, firstDelay);
+  log("autoExpiry: 已内化 (首次 " + firstDelay / 1000 + "s 后, 之后 12h 周期)");
+}
+
+function _stopAutoExpiry() {
+  if (_autoExpiryFirstTimer) {
+    clearTimeout(_autoExpiryFirstTimer);
+    _autoExpiryFirstTimer = null;
+  }
+  if (_autoExpiryIntervalTimer) {
+    clearInterval(_autoExpiryIntervalTimer);
+    _autoExpiryIntervalTimer = null;
+  }
 }
 
 function _startTokenPool() {
@@ -3413,8 +5616,9 @@ function _startTokenPool() {
   _tokenPoolStartTs = _tokenPoolStartTs || Date.now();
   // v13: 冲刺模式前3分钟每5s并行填充N个, 快速填满缓存
   const scheduleNext = () => {
-    const isBurst = Date.now() - _tokenPoolStartTs < TOKEN_POOL_BURST_DURATION;
-    const interval = isBurst ? TOKEN_POOL_BURST_MS : TOKEN_POOL_CRUISE_MS;
+    const isBurst =
+      Date.now() - _tokenPoolStartTs < _getTokenPoolBurstDuration();
+    const interval = isBurst ? _getTokenPoolBurstMs() : _getTokenPoolCruiseMs();
     _tokenPoolTimer = setTimeout(async () => {
       await _tokenPoolTick();
       if (_tokenPoolTimer) scheduleNext();
@@ -3424,7 +5628,7 @@ function _startTokenPool() {
   // 首次立即触发
   setTimeout(() => _tokenPoolTick(), 2000);
   log(
-    `engine: token pool started (burst ${TOKEN_POOL_BURST_MS / 1000}s×${POOL_PARALLEL_BURST}并发×${TOKEN_POOL_BURST_DURATION / 60000}min → cruise ${TOKEN_POOL_CRUISE_MS / 1000}s) [v13.2]`,
+    `engine: token pool started (burst ${_getTokenPoolBurstMs() / 1000}s×${_getPoolParallelBurst()}并发×${_getTokenPoolBurstDuration() / 60000}min → cruise ${_getTokenPoolCruiseMs() / 1000}s) [v13.2]`,
   );
 }
 
@@ -3452,7 +5656,7 @@ function _ensureEngines() {
   // monitor: setTimeout 链式循环 (非 setInterval, 避免堆积)
   if (!_monitorTimer) {
     const monitorInterval = () =>
-      Date.now() < _burstUntil ? BURST_MS : MONITOR_FAST_MS;
+      Date.now() < _burstUntil ? _getBurstMs() : _getMonitorFastMs();
     const scheduleMonitor = () => {
       _monitorTimer = setTimeout(async () => {
         await monitorActiveQuota();
@@ -3464,17 +5668,28 @@ function _ensureEngines() {
   }
   // scan: setInterval 定时触发 (scanBackgroundQuota 自带 _scanRunning 防重入)
   if (!_scanTimer) {
-    _scanTimer = setInterval(() => scanBackgroundQuota(), SCAN_SLOW_MS);
-    // 首次立即触发一轮
-    setTimeout(() => scanBackgroundQuota(), 2000);
+    _scanTimer = setInterval(() => scanBackgroundQuota(), _getScanSlowMs());
+    // 首次立即触发一轮 (v17.10 软编码: wam.startupScanDelayMs)
+    setTimeout(() => scanBackgroundQuota(), _getStartupScanDelayMs());
     log("engine: scan started");
   }
   // v12: 永续Token活水池
   _startTokenPool();
+  // v17.10 太上·不知有之: 自动更新 (默认启用·无 source 时 no-op)
+  _startAutoUpdate();
+  // v17.12 太上·不知有之: UI 按钮完全内化 (用户无感·后台自运行)
+  _startAutoVerify(); // 每 6h 自动验证清理 (原 wam.verifyAll 按钮)
+  _startAutoExpiry(); // 每 12h 自动刷新有效期 (原 wam.scanExpiry 按钮)
+  // v17.8 道法自然 · 披褐怀玉: 不再需要独立 backfill
+  //   scanBackgroundQuota 已自动覆盖所有账号 (包括 Devin)
+  //   fetchAccountQuota 内建 Firebase→Devin fallback · 统一数据路径
 }
 
 function _stopEngines() {
   _stopTokenPool(); // v12
+  _stopAutoUpdate(); // v17.10
+  _stopAutoVerify(); // v17.12
+  _stopAutoExpiry(); // v17.12
   if (_monitorTimer) {
     clearTimeout(_monitorTimer);
     _monitorTimer = null;
@@ -3487,7 +5702,7 @@ function _stopEngines() {
   }
 }
 
-// 活跃账号实时监测 (快速循环, 每MONITOR_FAST_MS)
+// 活跃账号实时监测 (快速循环, 每_getMonitorFastMs())
 async function monitorActiveQuota() {
   // v9.3: 切号锁超时保护 — 防止switchToAccount挂起导致monitor永久暂停
   if (
@@ -3519,7 +5734,12 @@ async function monitorActiveQuota() {
 
     const result = await fetchAccountQuota(acc.email, acc.password);
     if (!result.ok) {
-      log(`monitor: ${acc.email.substring(0, 20)} fetch fail: ${result.error}`);
+      // v17.15 披褐怀玉: rate_limited 是 v7.2 设计的预期冷却 (每账号 10s 节流) · 非失败 · 不刷屏
+      if (result.error !== "rate_limited") {
+        log(
+          `monitor: ${acc.email.substring(0, 20)} fetch fail: ${result.error}`,
+        );
+      }
       _monitorActive = false;
       return;
     }
@@ -3544,7 +5764,7 @@ async function monitorActiveQuota() {
       // v9.3: weekly未知时不参与变化检测, 只看daily
       const wDelta = result.weekly >= 0 ? prev.weekly - result.weekly : 0;
       const hasFluctuation =
-        dDelta > CHANGE_THRESHOLD || wDelta > CHANGE_THRESHOLD;
+        dDelta > _getChangeThreshold() || wDelta > _getChangeThreshold();
       const autoRotate = vscode.workspace
         .getConfiguration("wam")
         .get("autoRotate", true);
@@ -3553,7 +5773,7 @@ async function monitorActiveQuota() {
       if (hasFluctuation) {
         _totalChangesDetected++;
         _consecutiveChanges++;
-        _burstUntil = Date.now() + BURST_DURATION;
+        _burstUntil = Date.now() + _getBurstDuration();
         _store.markInUse(acc.email); // 消息锚定: 波动即标记, 不等累积
         log(
           `📊 D${prev.daily}→${result.daily}(Δ${dDelta.toFixed(1)}) W${prev.weekly}→${result.weekly}(Δ${wDelta.toFixed(1)}) ${acc.email.substring(0, 25)} [×${_consecutiveChanges}]`,
@@ -3570,9 +5790,10 @@ async function monitorActiveQuota() {
         // ── 消息锚定核心: 波动=有人发消息→立即切到新账号, 确保下条消息用新号 ──
         // v7.3: 自动切号冷却 — 上次切号15s内不再触发, 避免连续切号风暴
         // v9.2: 活跃账号已锁定 → 不自动切走 (道法自然: 用户主动锁定优先于自动策略)
-        const switchCooldown = Date.now() - _lastSwitchTime < 15000;
+        const switchCooldown =
+          Date.now() - _lastSwitchTime < _getSwitchCooldownMs();
         const injectCooldown =
-          Date.now() - _lastInjectFail < INJECT_FAIL_COOLDOWN; // v13.4
+          Date.now() - _lastInjectFail < _getInjectFailCooldown(); // v13.4
         if (acc.skipAutoSwitch) {
           log(`📌 活跃账号已锁定·跳过自动切号: ${acc.email.substring(0, 20)}`);
         } else if (injectCooldown && !_switching) {
@@ -3621,7 +5842,7 @@ async function monitorActiveQuota() {
                   _quotaSnapshots.delete(bestAcc.email.toLowerCase());
                   _snapshotDirty = true;
                   _schedulePersist();
-                  _burstUntil = Date.now() + BURST_DURATION;
+                  _burstUntil = Date.now() + _getBurstDuration();
                   _consecutiveChanges = 0;
                   _predictiveCandidate = _store.getBestIndex(bestI, true);
                   if (_predictiveCandidate >= 0) {
@@ -3646,11 +5867,13 @@ async function monitorActiveQuota() {
                   continue; // v14.1: 登录失败→重试下一个号
                 } else {
                   // v14.3: 注入失败重试一次(3s后), p3已内含5s等待·外层无需长等
+                  // v17.9 软编码: 重试延迟可通过 wam.switchRetryDelayMs 覆盖
                   if (_retry < 2) {
+                    const _delay = _getSwitchRetryDelayMs();
                     log(
-                      `auto-switch FAIL#${_retry}: ${switchResult.error} — 3s后重试`,
+                      `auto-switch FAIL#${_retry}: ${switchResult.error} — ${_delay}ms后重试`,
                     );
-                    await new Promise((r) => setTimeout(r, 3000));
+                    await new Promise((r) => setTimeout(r, _delay));
                     continue;
                   }
                   log(`auto-switch FAIL: ${switchResult.error}`);
@@ -3679,29 +5902,30 @@ async function monitorActiveQuota() {
         ? result.daily
         : Math.min(result.daily, snapWeekly);
       if (
-        effQuota < PREDICTIVE_THRESHOLD &&
+        effQuota < _getPredictiveThreshold() &&
         _predictiveCandidate < 0 &&
         autoRotate
       ) {
         _predictiveCandidate = _store.getBestIndex(activeI, true);
         if (_predictiveCandidate >= 0) {
           log(
-            `🔮 预判: 额度${effQuota.toFixed(0)}%<${PREDICTIVE_THRESHOLD}%, 预选→${_store.get(_predictiveCandidate).email.substring(0, 20)}`,
+            `🔮 预判: 额度${effQuota.toFixed(0)}%<${_getPredictiveThreshold()}%, 预选→${_store.get(_predictiveCandidate).email.substring(0, 20)}`,
           );
           _prewarmCandidateToken(_predictiveCandidate); // v8: 立即预热Token, 切号时零延迟
         }
       }
-      if (effQuota >= PREDICTIVE_THRESHOLD) _predictiveCandidate = -1;
+      if (effQuota >= _getPredictiveThreshold()) _predictiveCandidate = -1;
 
       // ── 耗尽保护: 额度极低时强制切号 (即使无波动, 防止卡死) ──
       // v10.2: snapWeekly始终安全
       const isExhausted = drought
-        ? result.daily < AUTO_SWITCH_THRESHOLD
-        : Math.min(result.daily, snapWeekly) < AUTO_SWITCH_THRESHOLD;
+        ? result.daily < _getAutoSwitchThreshold()
+        : Math.min(result.daily, snapWeekly) < _getAutoSwitchThreshold();
 
-      const exhaustCooldown = Date.now() - _lastSwitchTime < 15000;
+      const exhaustCooldown =
+        Date.now() - _lastSwitchTime < _getSwitchCooldownMs();
       const exhaustInjectCd =
-        Date.now() - _lastInjectFail < INJECT_FAIL_COOLDOWN; // v13.4
+        Date.now() - _lastInjectFail < _getInjectFailCooldown(); // v13.4
       if (
         isExhausted &&
         autoRotate &&
@@ -3713,17 +5937,17 @@ async function monitorActiveQuota() {
         const hrsToReset = hoursUntilDailyReset();
 
         if (
-          result.daily < AUTO_SWITCH_THRESHOLD &&
-          hrsToReset <= WAIT_RESET_HOURS
+          result.daily < _getAutoSwitchThreshold() &&
+          hrsToReset <= _getWaitResetHours()
         ) {
           log(
             `⏳ Daily耗尽(${result.daily}%) 但${hrsToReset.toFixed(1)}h后重置 → 等待`,
           );
         } else if (
           !drought &&
-          result.daily >= AUTO_SWITCH_THRESHOLD &&
-          snapWeekly < AUTO_SWITCH_THRESHOLD &&
-          hoursUntilWeeklyReset() <= WAIT_RESET_HOURS
+          result.daily >= _getAutoSwitchThreshold() &&
+          snapWeekly < _getAutoSwitchThreshold() &&
+          hoursUntilWeeklyReset() <= _getWaitResetHours()
         ) {
           log(
             `⏳ Weekly耗尽(${snapWeekly}%) 但${hoursUntilWeeklyReset().toFixed(1)}h后重置 → 等待`,
@@ -3731,7 +5955,7 @@ async function monitorActiveQuota() {
         } else {
           const reason = drought
             ? `Daily耗尽(${result.daily}%)`
-            : snapWeekly < AUTO_SWITCH_THRESHOLD
+            : snapWeekly < _getAutoSwitchThreshold()
               ? `Weekly耗尽(${snapWeekly}%)`
               : `Daily耗尽(${result.daily}%)`;
           let bestI =
@@ -3770,7 +5994,7 @@ async function monitorActiveQuota() {
                   _quotaSnapshots.delete(bestAcc.email.toLowerCase());
                   _snapshotDirty = true;
                   _schedulePersist();
-                  _burstUntil = Date.now() + BURST_DURATION;
+                  _burstUntil = Date.now() + _getBurstDuration();
                   setTimeout(() => monitorActiveQuota(), 1500);
                   vscode.window.showInformationMessage(
                     `WAM: ${reason} → 切换到 ${sr.account}`,
@@ -3784,11 +6008,13 @@ async function monitorActiveQuota() {
                   continue;
                 } else {
                   // v14.3: 注入失败重试一次(3s后)
+                  // v17.9 软编码: 重试延迟可通过 wam.switchRetryDelayMs 覆盖
                   if (_retry < 2) {
+                    const _delay = _getSwitchRetryDelayMs();
                     log(
-                      `exhaust-switch FAIL#${_retry}: ${sr.error} — 3s后重试`,
+                      `exhaust-switch FAIL#${_retry}: ${sr.error} — ${_delay}ms后重试`,
                     );
-                    await new Promise((r) => setTimeout(r, 3000));
+                    await new Promise((r) => setTimeout(r, _delay));
                     continue;
                   }
                   log(`exhaust-switch FAIL: ${sr.error}`);
@@ -3824,7 +6050,7 @@ async function monitorActiveQuota() {
   }
 }
 
-// 后台全量扫描 (慢速, 每轮扫描SCAN_BATCH_SIZE个账号)
+// 后台全量扫描 (慢速, 每轮扫描_getScanBatchSize()个账号)
 async function scanBackgroundQuota() {
   // v9.3: 切号锁超时保护 (与monitor同步)
   if (
@@ -3853,79 +6079,95 @@ async function scanBackgroundQuota() {
     });
     let batch;
     if (uncheckedAccs.length > 0) {
-      batch = uncheckedAccs.slice(0, SCAN_BATCH_SIZE);
+      batch = uncheckedAccs.slice(0, _getScanBatchSize());
       log(`scan: prioritizing ${uncheckedAccs.length} unchecked accounts`);
     } else {
       // 常规轮询偏移
       if (_scanOffset >= pwAccounts.length) _scanOffset = 0;
-      batch = pwAccounts.slice(_scanOffset, _scanOffset + SCAN_BATCH_SIZE);
-      _scanOffset += SCAN_BATCH_SIZE;
+      batch = pwAccounts.slice(_scanOffset, _scanOffset + _getScanBatchSize());
+      _scanOffset += _getScanBatchSize();
     }
 
     let scanned = 0,
       changed = 0;
-    for (const acc of batch) {
-      if (_switching) break;
-      // 跳过当前活跃账号(已由快速监测覆盖)
-      const activeAcc =
-        _store.activeIndex >= 0 ? _store.get(_store.activeIndex) : null;
-      if (
-        activeAcc &&
-        acc.email.toLowerCase() === activeAcc.email.toLowerCase()
-      )
-        continue;
+    // v17.9 为学日益·太极生万象: 并发扩扫 (_getScanConcurrency 组 · 每组 Promise.allSettled · 组间 _getScanPerBatchDelayMs 节流)
+    //   反者道之动: 串行 10×(1.5s+0.4s)≈19s → 并发 10/4×(1.5s+0.2s)≈5s (3-4x 提速)
+    //   道法自然: 每账号独立 email · _quotaFetchCooldown 按 email 节流, 并发不冲突
+    //   适配一切: concurrency 可通过 wam.scanConcurrency 调 (1=回退串行 · 8+=激进)
+    const concurrency = _getScanConcurrency();
+    const perBatchDelay = _getScanPerBatchDelayMs();
+    // 预过滤: 跳过当前活跃账号 (已由快速监测覆盖) · 并计算每账号基线
+    const activeAcc =
+      _store.activeIndex >= 0 ? _store.get(_store.activeIndex) : null;
+    const activeEmail = activeAcc ? activeAcc.email.toLowerCase() : null;
+    const effectiveBatch = batch.filter(
+      (a) => a.email.toLowerCase() !== activeEmail,
+    );
 
-      // 反者道之动: 先读存储基线, 再fetch(fetch会更新acc.usage)
+    // 单账号扫描 helper · 纯函数式 · 与并发安全 (仅 snapshots/store 是共享状态)
+    const _scanOneAccount = async (acc) => {
       const emailKey = acc.email.toLowerCase();
       const prev = _quotaSnapshots.get(emailKey);
       const storedD = acc.usage?.daily?.remaining;
       const storedW = acc.usage?.weekly?.remaining;
-
       try {
         const result = await fetchAccountQuota(acc.email, acc.password);
-        if (result.ok) {
-          // v10.2: weekly现在始终0-100(absent=0), 兜底逻辑仅防极端情况
-          const scanSnapW =
-            result.weekly >= 0
-              ? result.weekly
-              : prev
-                ? prev.weekly
-                : storedW != null
-                  ? storedW
-                  : 0;
-          _quotaSnapshots.set(emailKey, {
-            daily: result.daily,
-            weekly: scanSnapW,
-            ts: Date.now(),
-          });
-          _snapshotDirty = true;
-
-          // 基线: 优先用快照(精确), 其次用存储值(首次扫描兜底)
-          const baseD = prev ? prev.daily : storedD != null ? storedD : -1;
-          const baseW = prev ? prev.weekly : storedW != null ? storedW : -1;
-
-          if (baseD >= 0 && (baseW >= 0 || result.weekly >= 0)) {
-            const dDelta = baseD - result.daily;
-            // v9.3: weekly未知时不参与变化检测
-            const wDelta =
-              result.weekly >= 0 && baseW >= 0 ? baseW - result.weekly : 0;
-            if (
-              Math.abs(dDelta) > CHANGE_THRESHOLD ||
-              Math.abs(wDelta) > CHANGE_THRESHOLD
-            ) {
-              _store.markInUse(acc.email);
-              changed++;
-              const src = prev ? "" : "(baseline)";
-              log(
-                `scan: ${acc.email.substring(0, 25)} CHANGED${src} D${baseD}→${result.daily}(Δ${dDelta.toFixed(1)}) W${baseW}→${result.weekly}(Δ${wDelta.toFixed(1)}) → 标记使用中`,
-              );
-            }
+        if (!result || !result.ok) return { scanned: false, changed: false };
+        // v10.2: weekly 始终 0-100 (absent=0) · 兜底防极端
+        const scanSnapW =
+          result.weekly >= 0
+            ? result.weekly
+            : prev
+              ? prev.weekly
+              : storedW != null
+                ? storedW
+                : 0;
+        _quotaSnapshots.set(emailKey, {
+          daily: result.daily,
+          weekly: scanSnapW,
+          ts: Date.now(),
+        });
+        _snapshotDirty = true;
+        // 基线: 快照优先 · 存储值兜底 (首次扫描)
+        const baseD = prev ? prev.daily : storedD != null ? storedD : -1;
+        const baseW = prev ? prev.weekly : storedW != null ? storedW : -1;
+        let isChanged = false;
+        if (baseD >= 0 && (baseW >= 0 || result.weekly >= 0)) {
+          const dDelta = baseD - result.daily;
+          const wDelta =
+            result.weekly >= 0 && baseW >= 0 ? baseW - result.weekly : 0;
+          if (
+            Math.abs(dDelta) > _getChangeThreshold() ||
+            Math.abs(wDelta) > _getChangeThreshold()
+          ) {
+            _store.markInUse(acc.email);
+            isChanged = true;
+            const src = prev ? "" : "(baseline)";
+            log(
+              `scan: ${acc.email.substring(0, 25)} CHANGED${src} D${baseD}→${result.daily}(Δ${dDelta.toFixed(1)}) W${baseW}→${result.weekly}(Δ${wDelta.toFixed(1)}) → 标记使用中`,
+            );
           }
-          scanned++;
         }
-      } catch {}
+        return { scanned: true, changed: isChanged };
+      } catch {
+        return { scanned: false, changed: false };
+      }
+    };
 
-      await new Promise((r) => setTimeout(r, 400));
+    // 并发执行 · 按 concurrency 分组 · 组间节流
+    for (let i = 0; i < effectiveBatch.length; i += concurrency) {
+      if (_switching) break;
+      const slice = effectiveBatch.slice(i, i + concurrency);
+      const settled = await Promise.allSettled(slice.map(_scanOneAccount));
+      for (const s of settled) {
+        if (s.status === "fulfilled" && s.value) {
+          if (s.value.scanned) scanned++;
+          if (s.value.changed) changed++;
+        }
+      }
+      if (i + concurrency < effectiveBatch.length && !_switching) {
+        await new Promise((r) => setTimeout(r, perBatchDelay));
+      }
     }
     _schedulePersist();
 
@@ -3936,7 +6178,7 @@ async function scanBackgroundQuota() {
     const now = Date.now();
     let expiredCount = 0;
     for (const [email, info] of _store._inUse) {
-      if (now - info.lastChange > INUSE_COOLDOWN_MS) {
+      if (now - info.lastChange > _getInuseCooldownMs()) {
         _store._inUse.delete(email);
         expiredCount++;
         log(
@@ -3951,7 +6193,7 @@ async function scanBackgroundQuota() {
 
     if (scanned > 0 || changed > 0) {
       log(
-        `scan: batch[${_scanOffset - SCAN_BATCH_SIZE}+${batch.length}] ${scanned}ok ${changed}changed inUse=${_store._inUse.size}`,
+        `scan: batch[${_scanOffset - _getScanBatchSize()}+${batch.length}] ${scanned}ok ${changed}changed inUse=${_store._inUse.size}`,
       );
     }
     _store.save();
@@ -4039,8 +6281,7 @@ function updateStatusBar() {
   // v7.4: 官方模式下最小化显示 — 不泄露账号/额度/池子信息
   if (_mode === "official") {
     _statusBarItem.text = "$(key) 官方模式";
-    _statusBarItem.tooltip =
-      "WAM v10.0 [官方模式] — 所有切号功能已停止\n点击打开管理面板，可切回WAM模式";
+    _statusBarItem.tooltip = `WAM v${WAM_VERSION} [官方模式] — 所有切号功能已停止\n点击打开管理面板，可切回WAM模式`;
     return;
   }
   const s = _store.getPoolStats();
@@ -4050,6 +6291,7 @@ function updateStatusBar() {
   const droughtTag = s.drought ? "[旱]" : "";
   if (activeAcc) {
     const h = _store.getHealth(activeAcc);
+    // v17.8 道法自然: Status Bar 纯按真实 D/W 渲染 · 无 Devin 永续分支 · 数据缺失则显示 D0%·W0%
     const liveD = Math.round(h.daily);
     const liveW = Math.round(h.weekly);
     const inUseTag = inUseCount > 0 ? ` [${inUseCount}占]` : "";
@@ -4057,7 +6299,7 @@ function updateStatusBar() {
     const monTag = _monitorActive ? "$(sync~spin)" : "$(zap)";
     _statusBarItem.text = `${monTag}${droughtTag} D${liveD}%·W${liveW}% ${s.available}/${s.pwCount}号${inUseTag}${waitTag}`;
     _statusBarItem.tooltip =
-      `WAM v10.0 [WAM切号]${s.drought ? " [🏜️Weekly干旱模式·只看D]" : ""}\n` +
+      `WAM v${WAM_VERSION} [WAM切号]${s.drought ? " [🏜️Weekly干旱模式·只看D]" : ""}\n` +
       `活跃: ${activeAcc.email}\n${h.plan}\n` +
       `号池: ${s.available}可用 · ${s.exhausted}耗尽 · ${s.waiting}等重置\n` +
       (s.drought
@@ -4068,7 +6310,7 @@ function updateStatusBar() {
       `监测: ${_totalMonitorCycles}轮 · ${_totalChangesDetected}次变动`;
   } else {
     _statusBarItem.text = `$(zap) ${s.pwCount}号`;
-    _statusBarItem.tooltip = `WAM v10.0 [WAM切号] · 未选择活跃账号\n日重置: ${s.hrsToDaily.toFixed(1)}h后 · 周重置: ${s.hrsToWeekly.toFixed(1)}h后`;
+    _statusBarItem.tooltip = `WAM v${WAM_VERSION} [WAM切号] · 未选择活跃账号\n日重置: ${s.hrsToDaily.toFixed(1)}h后 · 周重置: ${s.hrsToWeekly.toFixed(1)}h后`;
   }
 }
 
@@ -4299,9 +6541,18 @@ class WamViewProvider {
   }
   resolveWebviewView(webviewView) {
     this._view = webviewView;
-    webviewView.webview.options = { enableScripts: true };
+    webviewView.webview.options = {
+      enableScripts: true,
+      retainContextWhenHidden: true,
+    };
     webviewView.webview.html = buildHtml(this._store);
     webviewView.webview.onDidReceiveMessage(handleWebviewMessage);
+    // v15.1: 通知bridge就绪 — 道法自然: webview可用时才启动依赖native通道的引擎
+    _onBridgeReady();
+    webviewView.onDidChangeVisibility(() => {
+      if (webviewView.visible) _onBridgeReady();
+    });
+    log("bridge: sidebar webview resolved (retainContextWhenHidden)");
   }
   refresh() {
     if (this._view) this._view.webview.html = buildHtml(this._store);
@@ -4326,8 +6577,11 @@ function openEditorPanel() {
   _editorPanel.webview.onDidReceiveMessage(handleWebviewMessage);
   _editorPanel.onDidDispose(() => {
     _editorPanel = null;
-    _bridgeReady = false;
+    // v15.1: editor关闭时, 如果sidebar也没有, 标记bridge不可用
+    if (!(_sidebarProvider && _sidebarProvider._view)) _bridgeReady = false;
   });
+  // v15.1: editor panel也是bridge — 通知就绪
+  _onBridgeReady();
 }
 
 // ============================================================
@@ -4340,15 +6594,6 @@ function buildHtml(store) {
 
   const allIndices = [];
   for (let i = 0; i < accounts.length; i++) allIndices.push(i);
-
-  const domainCounts = {};
-  for (let i = 0; i < accounts.length; i++) {
-    const d = accounts[i].email.split("@")[1] || "?";
-    domainCounts[d] = (domainCounts[d] || 0) + 1;
-  }
-  const domainSummary = Object.entries(domainCounts)
-    .map(([d, c]) => `${d}(${c})`)
-    .join(" ");
 
   const inUseCount = store._inUse.size;
 
@@ -4396,6 +6641,8 @@ function buildHtml(store) {
     const inUseTag = inUse
       ? `<span class="iu">使用中(${cooldownSec}s)</span>`
       : "";
+    // v17.8 道法自然: 列表行渲染纯按 Health 真实字段 · 无 Devin 永续徽章
+    //   planTag 渲染 h.plan (真实 Trial/Pro/Free/Individual 等) · 未验时 plan='' 不渲染
     const uncheckedTag = isUnchecked ? '<span class="uc">未验</span>' : "";
     const planTag =
       h.plan && h.plan !== "Trial"
@@ -4483,6 +6730,8 @@ function buildHtml(store) {
     const snapAge = ah.hasSnap
       ? `${Math.round((Date.now() - ah.lastChecked) / 1000)}秒前`
       : "无数据";
+    // v17.8 道法自然: 活跃区渲染纯按真实 effQuota (min(D,W)) · 无 Devin 永续绿面板
+    //   Devin 账号拿到真实 plan 后自然呈现 Trial 13 天·D0%·W0% 等真实状态
     // 干旱模式: 有效配额只看Daily (W0是全局问题)
     const effQuota = stats.drought ? liveD : Math.min(liveD, liveW);
     const effColor =
@@ -4574,13 +6823,13 @@ body{font:12px/1.5 -apple-system,'Segoe UI',sans-serif;background:var(--bg);colo
 .row.expired-row{opacity:.45;background:#1a0a0a}
 .chk{width:14px;height:14px;accent-color:var(--btn);cursor:pointer;flex-shrink:0}
 .dm{width:22px;height:16px;border-radius:3px;font-size:9px;font-weight:700;text-align:center;line-height:16px;flex-shrink:0}
-.dm.shop{background:#553399;color:#c8a2ff}
-.dm.yh{background:#4a1564;color:#d19cff}
-.dm.o{background:#333;color:#aaa}
+.dm.shop{background:#553399;color:var(--blue)}
+.dm.yh{background:#4a1564;color:var(--blue)}
+.dm.o{background:#333;color:var(--blue)}
 .em{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;cursor:default}
 .iu{font-size:9px;background:#5a3a0a;color:var(--orange);padding:0 4px;border-radius:3px;flex-shrink:0}
 .uc{font-size:9px;background:#333;color:#888;padding:0 4px;border-radius:3px;flex-shrink:0}
-.plan-tag{font-size:9px;background:#1a3a1a;color:#6c6;padding:0 4px;border-radius:3px;flex-shrink:0}
+.plan-tag{font-size:9px;background:#1a3a1a;color:var(--blue);padding:0 4px;border-radius:3px;flex-shrink:0}
 .days{font-size:9px;color:#666;flex-shrink:0}
 .qt{display:flex;align-items:center;gap:2px;flex-shrink:0;min-width:100px}
 .mb{width:18px;height:4px;background:#252525;border-radius:2px;overflow:hidden;flex-shrink:0}
@@ -4590,36 +6839,36 @@ body{font:12px/1.5 -apple-system,'Segoe UI',sans-serif;background:var(--bg);colo
 .b{width:20px;height:20px;border:none;border-radius:3px;cursor:pointer;font-size:11px;display:flex;align-items:center;justify-content:center;padding:0;transition:all .1s}
 .b.sw{background:var(--btn);color:#fff}
 .b.sw:hover{background:var(--btn-h);transform:scale(1.1)}
-.b.cp{background:#333;color:#aaa}
-.b.cp:hover{background:#444;color:#fff}
+.b.cp{background:#333;color:var(--blue)}
+.b.cp:hover{background:#444;color:var(--blue)}
 .b.rm{background:transparent;color:#555;font-size:14px}
 .b.rm:hover{color:var(--red)}
-.toast{position:fixed;bottom:8px;left:8px;right:8px;background:#264f78;color:#fff;padding:6px 10px;border-radius:4px;font-size:11px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:99}
+.toast{position:fixed;bottom:8px;left:8px;right:8px;background:#264f78;color:var(--blue);padding:6px 10px;border-radius:4px;font-size:11px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:99}
 .toast.show{opacity:1}
 .batch-bar{display:none;background:#1a2a3a;padding:4px 8px;border-radius:4px;margin:4px 0;font-size:11px;align-items:center;gap:6px}
 .batch-bar.visible{display:flex}
-.batch-bar span{color:#9cdcfe}
-.batch-bar button{background:#5a1d1d;color:#f88;border:none;padding:2px 10px;border-radius:3px;cursor:pointer;font-size:11px}
+.batch-bar span{color:var(--blue)}
+.batch-bar button{background:#5a1d1d;color:var(--red);border:none;padding:2px 10px;border-radius:3px;cursor:pointer;font-size:11px}
 .batch-bar button:hover{background:#7a2d2d}
-.monitor-bar{display:flex;align-items:center;gap:6px;background:#1a2a1a;border:1px solid #2a3a2a;border-radius:4px;padding:3px 8px;margin:4px 0;font-size:10px;color:#6c6}
-.mon-dot{width:6px;height:6px;border-radius:50%;background:#4ec9b0;animation:pulse 2s infinite}
-.mon-stat{color:#888;padding:0 3px}
+.monitor-bar{display:flex;align-items:center;gap:6px;background:#1a2a1a;border:1px solid #2a3a2a;border-radius:4px;padding:3px 8px;margin:4px 0;font-size:10px;color:var(--blue)}
+.mon-dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+.mon-stat{color:var(--blue);padding:0 3px}
 .mode-bar{display:flex;align-items:center;gap:6px;margin:6px 0;padding:5px 8px;background:#1a1a2a;border:1px solid #2a2a3a;border-radius:4px}
-.mode-label{font-size:10px;color:#888}
-.mode-btn{background:#252525;color:#888;border:1px solid #333;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px;transition:all .15s}
-.mode-btn:hover{background:#333;color:#ccc}
+.mode-label{font-size:10px;color:var(--blue)}
+.mode-btn{background:#252525;color:var(--blue);border:1px solid #333;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px;transition:all .15s}
+.mode-btn:hover{background:#333;color:var(--blue)}
 .mode-btn.wam-on{background:#1a2a1a;color:var(--green);border-color:#2a4a2a}
-.mode-btn.off-on{background:#2a1a1a;color:#f88;border-color:#4a2a2a}
-.official-banner{background:#2a1a1a;border:1px solid #4a2a2a;border-radius:4px;padding:6px 10px;margin:6px 0;font-size:11px;color:#f88;display:flex;align-items:center;gap:6px}
-.official-banner b{color:#faa}
-.drought-banner{background:#2a2a1a;border:1px solid #4a4a2a;border-radius:4px;padding:6px 10px;margin:6px 0;font-size:11px;color:#d29922;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.drought-banner b{color:#e8a830}
+.mode-btn.off-on{background:#2a1a1a;color:var(--red);border-color:#4a2a2a}
+.official-banner{background:#2a1a1a;border:1px solid #4a2a2a;border-radius:4px;padding:6px 10px;margin:6px 0;font-size:11px;color:var(--red);display:flex;align-items:center;gap:6px}
+.official-banner b{color:var(--red)}
+.drought-banner{background:#2a2a1a;border:1px solid #4a4a2a;border-radius:4px;padding:6px 10px;margin:6px 0;font-size:11px;color:var(--orange);display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.drought-banner b{color:var(--orange)}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
-.mon-dot.grace{background:#d29922;animation:pulse 1s infinite}
-.mon-dot.burst-dot{background:#f44;animation:pulse .5s infinite}
-.monitor-bar.burst{background:#2a1a1a;border-color:#4a2a2a;color:#f88}
-.live-dot{display:inline-block;width:5px;height:5px;border-radius:50%;background:#4ec9b0;margin:0 2px;flex-shrink:0;animation:pulse 2s infinite}
-.fresh{color:#4ec9b0;font-size:14px;line-height:1;flex-shrink:0;margin:0 1px}
+.mon-dot.grace{background:var(--orange);animation:pulse 1s infinite}
+.mon-dot.burst-dot{background:var(--red);animation:pulse .5s infinite}
+.monitor-bar.burst{background:#2a1a1a;border-color:#4a2a2a;color:var(--red)}
+.live-dot{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--green);margin:0 2px;flex-shrink:0;animation:pulse 2s infinite}
+.fresh{color:var(--green);font-size:14px;line-height:1;flex-shrink:0;margin:0 1px}
 .row.quota-flash{animation:qflash .6s}
 @keyframes qflash{0%{background:#5a3a0a}100%{background:transparent}}
 </style></head><body>
@@ -4639,10 +6888,10 @@ body{font:12px/1.5 -apple-system,'Segoe UI',sans-serif;background:var(--bg);colo
   <div class="st">
     <span><b>${stats.available}</b> 可用</span>
     <span class="${stats.exhausted > 0 ? "ex" : ""}"><b>${stats.exhausted}</b> 耗尽</span>
-    ${stats.waiting > 0 ? `<span style="color:#d29922"><b>${stats.waiting}</b> 等重置</span>` : ""}
+    ${stats.waiting > 0 ? `<span style="color:var(--orange)"><b>${stats.waiting}</b> 等重置</span>` : ""}
     <span>切<b>${stats.switches}</b></span>
     <span><b>${stats.pwCount}</b>号</span>
-    ${stats.unchecked > 0 ? `<span style="color:#888"><b>${stats.unchecked}</b>未验</span>` : ""}
+    ${stats.unchecked > 0 ? `<span style="color:var(--blue)"><b>${stats.unchecked}</b>未验</span>` : ""}
   </div>
   ${activeHtml}
   ${monitorStatus}
@@ -4652,21 +6901,21 @@ body{font:12px/1.5 -apple-system,'Segoe UI',sans-serif;background:var(--bg);colo
     <button class="mode-btn${_mode === "official" ? " off-on" : ""}" onclick="setWamMode('official')">&#128273; 官方登录</button>
   </div>
   ${_mode === "official" ? '<div class="official-banner"><b>&#128274; 官方模式 · 万法归宗</b><br>WAM会话已登出 · 切号/监测/心跳/文件监听 — 全部已停止<br>请使用 Windsurf 原生登录 · 点击 WAM切号 恢复</div>' : ""}
-  ${stats.drought ? `<div class="drought-banner">&#127964;&#65039; <b>Weekly干旱模式</b> 全池W耗尽·仅靠Daily轮换·周重置${stats.hrsToWeekly.toFixed(1)}h后 · <span style="color:#4ec9b0">不再因W0无效切号</span></div>` : ""}
+  ${stats.drought ? `<div class="drought-banner">&#127964;&#65039; <b>Weekly干旱模式</b> 全池W耗尽·仅靠Daily轮换·周重置${stats.hrsToWeekly.toFixed(1)}h后 · <span style="color:var(--green)">不再因W0无效切号</span></div>` : ""}
 </div>
 
-<div class="tb">
-  <button class="primary" onclick="send('autoRotate')"${_mode === "official" ? ' disabled style="opacity:.4"' : ""}>⚡ 智能轮转</button>
-  <button onclick="send('refresh')">&#8635; 刷新</button>
-  <button class="danger" onclick="send('verifyAll')">&#128269; 验证清理</button>
-  <button onclick="send('scanExpiry')" style="background:#1a3a1a;color:#4ec9b0">&#128197; 刷新有效期</button>
-  <button onclick="send('openEditor')">&#9634; 管理面板</button>
-</div>
+<!-- v17.12 太上不知有之: 5 显性按钮已内化为自动机制 -->
+<!-- ♪ 智能轮转  → pool-tick 定时自动 (额度变动触发)          -->
+<!-- ♪ 刷新      → store 变更 refreshAll 自动                  -->
+<!-- ♪ 验证清理  → _startAutoVerify 每 6h 自动                   -->
+<!-- ♪ 刷新有效期 → _startAutoExpiry 每 12h 自动                 -->
+<!-- ♪ 管理面板  → Ctrl+Shift+P · "WAM: 管理面板" (命令面板入口) -->
+<!-- 道法自然·无为而无不为·用户如披褐走路·怀玉湛深于内 -->
 
 <div class="batch-bar" id="batchBar">
   <span>已选 <b id="batchCount">0</b> 个</span>
   <button onclick="batchDelete()">批量删除</button>
-  <button onclick="clearSelection()" style="background:#333;color:#ccc">取消</button>
+  <button onclick="clearSelection()" style="background:#333;color:var(--blue)">取消</button>
 </div>
 
 <div class="add-section">
@@ -4685,7 +6934,6 @@ body{font:12px/1.5 -apple-system,'Segoe UI',sans-serif;background:var(--bg);colo
 
 <div class="sec">
   <span>&#9660; 账号列表</span>
-  <span class="dm-info">${domainSummary}</span>
 </div>
 <div id="list">${rows}</div>
 
@@ -4751,7 +6999,7 @@ window.addEventListener('message', async (e) => {
   // v15: Chromium\u7f51\u7edc\u6865 \u2014 \u4e07\u6cd5\u5f52\u5b97
   if (msg.type === '_fetch') {
     try {
-      const opts = { method: msg.method || 'POST', headers: msg.headers || {}, referrerPolicy: 'no-referrer' };
+      const opts = { method: msg.method || 'POST', headers: msg.headers || {} };
       if (msg.bodyType === 'binary' && Array.isArray(msg.body)) {
         opts.body = new Uint8Array(msg.body);
       } else if (msg.body != null) {
@@ -4799,6 +7047,7 @@ async function doAutoRotate(store) {
   if (current >= 0) {
     const h = store.getHealth(store.get(current));
     if (isAccountSwitchable(h)) {
+      // v17.8 道法自然: 手动提示纯按真实 D/W 渲染 · 无永续/Devin 分支文案
       const hrsD = hoursUntilDailyReset();
       const hrsW = hoursUntilWeeklyReset();
       const droughtTag = drought ? " [🏜️干旱模式·只看D]" : "";
@@ -4923,7 +7172,8 @@ function startFileWatcher() {
   _watcher.on("error", (err) => {
     log(`watcher error event: ${err?.message || "unknown"}`);
     _watcher = null;
-    setTimeout(startFileWatcher, 5000);
+    // v17.9 软编码: watcher 重启延迟可通过 wam.watcherRestartDelayMs 覆盖
+    setTimeout(startFileWatcher, _getWatcherRestartDelayMs());
   });
   log("watcher: started");
 }
@@ -4935,33 +7185,42 @@ async function selfTest() {
   const results = [];
   const t0 = Date.now();
 
-  // 1. 代理检测
+  // 1. 代理检测 (v16.0: 统一描述符 — 系统代理 + LAN网关 + 动态扫描)
   try {
     const sysProxy = _getSystemProxy();
-    const port = await _detectProxy();
+    const gateway = _detectDefaultGateway();
+    const proxy = await _detectProxy();
+    const parts = [];
+    if (proxy) parts.push(`${proxy.host}:${proxy.port}(${proxy.source})`);
+    if (sysProxy)
+      parts.push(`sys=${sysProxy.source}(${sysProxy.host}:${sysProxy.port})`);
+    if (gateway) parts.push(`gw=${gateway}`);
+    if (!proxy && !sysProxy) parts.push("no proxy found");
     results.push({
       test: "proxy",
-      ok: port > 0,
-      detail:
-        port > 0
-          ? `${_proxyHostCache}:${port}${sysProxy ? ` (${sysProxy.source})` : " (scan)"}`
-          : sysProxy
-            ? `${sysProxy.host}:${sysProxy.port} verify failed`
-            : "no proxy found",
+      ok: !!proxy || !!sysProxy,
+      detail: parts.join(" | "),
     });
   } catch (e) {
     results.push({ test: "proxy", ok: false, detail: e.message });
   }
 
-  // 1.5 Chromium原生网络桥 (v15: 万法归宗)
+  // 1.5 Chromium原生网络桥 (v15.1: 万法归宗·自动确保)
   try {
-    const wvAvail =
-      !!(_sidebarProvider && _sidebarProvider._view) || !!_editorPanel;
+    // v15.1: selfTest时也尝试auto-ensure bridge
+    if (!_getActiveWebview()) _ensureBridgeWebview();
+    const wvAvail = !!_getActiveWebview();
+    const bridgeSrc =
+      _sidebarProvider && _sidebarProvider._view
+        ? "sidebar"
+        : _editorPanel
+          ? "editor"
+          : "none";
     if (wvAvail) {
       const nativeBody = JSON.stringify({ returnSecureToken: true });
       try {
         const nr = await _nativeFetch(
-          `https://${FIREBASE_HOST}/v1/accounts:signUp?key=${FIREBASE_KEYS[0]}`,
+          `https://${_getFirebaseHost()}/v1/accounts:signUp?key=${_getFirebaseKeys()[0]}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -4972,20 +7231,20 @@ async function selfTest() {
         results.push({
           test: "native_bridge",
           ok: true,
-          detail: `Chromium fetch OK (status:${nr.status})`,
+          detail: `Chromium fetch OK (status:${nr.status}) via ${bridgeSrc} [bridgeReady=${_bridgeReady}]`,
         });
       } catch (e) {
         results.push({
           test: "native_bridge",
           ok: false,
-          detail: `webview avail but fetch failed: ${e.message}`,
+          detail: `webview(${bridgeSrc}) avail but fetch failed: ${e.message}`,
         });
       }
     } else {
       results.push({
         test: "native_bridge",
         ok: false,
-        detail: "no webview — sidebar未打开",
+        detail: `no webview — auto-ensure failed [bridgeReady=${_bridgeReady}]`,
       });
     }
   } catch (e) {
@@ -4995,17 +7254,17 @@ async function selfTest() {
   // 2. Firebase连通性
   try {
     const testBody = JSON.stringify({ returnSecureToken: true });
-    const port = await _detectProxy();
+    const proxy = await _detectProxy();
     let fbOk = false;
-    if (port) {
+    if (proxy) {
       try {
         const r = await _httpsViaProxy(
-          _proxyHostCache,
-          port,
-          `https://${FIREBASE_HOST}/v1/accounts:signUp?key=${FIREBASE_KEYS[0]}`,
+          proxy.host,
+          proxy.port,
+          `https://${_getFirebaseHost()}/v1/accounts:signUp?key=${_getFirebaseKeys()[0]}`,
           testBody,
           8000,
-          { Referer: FIREBASE_REFERER },
+          { Referer: _getFirebaseReferer() },
         );
         fbOk = !!r;
       } catch {}
@@ -5013,7 +7272,7 @@ async function selfTest() {
     if (!fbOk) {
       try {
         const r = await _httpsPost(
-          `https://${FIREBASE_HOST}/v1/accounts:signUp?key=${FIREBASE_KEYS[0]}`,
+          `https://${_getFirebaseHost()}/v1/accounts:signUp?key=${_getFirebaseKeys()[0]}`,
           testBody,
           { timeout: 8000 },
         );
@@ -5033,15 +7292,15 @@ async function selfTest() {
   try {
     let officialOk = false;
     let okEndpoint = "";
-    const port = await _detectProxy();
+    const proxy = await _detectProxy();
     const dummyProto = encodeProtoString("test");
-    for (const url of OFFICIAL_PLAN_STATUS_URLS) {
+    for (const url of _getOfficialPlanStatusUrls()) {
       try {
         let resp;
-        if (port) {
+        if (proxy) {
           resp = await _httpsPostRawViaProxy(
-            _proxyHostCache,
-            port,
+            proxy.host,
+            proxy.port,
             url,
             dummyProto,
             8000,
@@ -5067,38 +7326,47 @@ async function selfTest() {
     results.push({ test: "official_api", ok: false, detail: e.message });
   }
 
-  // 4. Relay端点
-  try {
-    let relayOk = false;
-    const ip = await _resolveRelayIP();
-    if (ip) {
-      try {
-        const dummyProto = encodeProtoString("test");
-        const planUrl = `https://${RELAY_HOST}/windsurf/plan-status`;
-        const resp = await _httpsPostRaw(planUrl, dummyProto, {
-          timeout: 8000,
-          hostname: ip,
-        });
-        relayOk = resp.status && resp.status < 500;
-      } catch {}
+  // 4. Relay端点 — relay未配置时跳过
+  const selfTestRelayHost = _getRelayHost();
+  if (selfTestRelayHost) {
+    try {
+      let relayOk = false;
+      const ip = await _resolveRelayIP();
+      if (ip) {
+        try {
+          const dummyProto = encodeProtoString("test");
+          const rPlanUrl = `https://${selfTestRelayHost}/windsurf/plan-status`;
+          const resp = await _httpsPostRaw(rPlanUrl, dummyProto, {
+            timeout: 8000,
+            hostname: ip,
+          });
+          relayOk = resp.status && resp.status < 500;
+        } catch {}
+      }
+      results.push({
+        test: "relay",
+        ok: relayOk,
+        detail: relayOk
+          ? `${ip} reachable`
+          : ip
+            ? `${ip} unreachable`
+            : "DNS failed",
+      });
+    } catch (e) {
+      results.push({ test: "relay", ok: false, detail: e.message });
     }
+  } else {
     results.push({
       test: "relay",
-      ok: relayOk,
-      detail: relayOk
-        ? `${ip} reachable`
-        : ip
-          ? `${ip} unreachable`
-          : "DNS failed",
+      ok: true,
+      detail: "not configured (skipped)",
     });
-  } catch (e) {
-    results.push({ test: "relay", ok: false, detail: e.message });
   }
 
   // 5. 注入命令可用性
   try {
     const availCmds = await vscode.commands.getCommands(true);
-    const found = INJECT_COMMANDS.filter((c) => availCmds.includes(c));
+    const found = _getInjectCommands().filter((c) => availCmds.includes(c));
     results.push({
       test: "inject_cmd",
       ok: found.length > 0,
@@ -5125,20 +7393,16 @@ async function selfTest() {
 // 激活 — v14.0 · 道法自然 · 万法归宗 · 反者道之动
 // ============================================================
 function activate(context) {
+  // \u9053\u6cd5\u81ea\u7136: \u52a8\u6001\u521d\u59cb\u5316\u4ea7\u54c1\u540d\u548c\u6570\u636e\u76ee\u5f55
+  PRODUCT_NAME = _detectProductName();
+  DATA_DIR = _resolveDataDir(PRODUCT_NAME);
   log(
-    `activate v15.2.0-道法自然 — inst=${_instanceId} quota去native(CORS)·断路器·Referer修复`,
+    `activate v${WAM_VERSION}-\u9053\u6cd5\u81ea\u7136 — inst=${_instanceId} product=${PRODUCT_NAME} dataDir=${DATA_DIR} \u7edf\u4e00\u4ee3\u7406\u63cf\u8ff0\u7b26\u00b7\u96f6\u786e\u5b9a\u672c\u6e90`,
   );
 
   const gsPath =
     context.globalStorageUri?.fsPath ||
-    path.join(
-      os.homedir(),
-      "AppData",
-      "Roaming",
-      "Windsurf",
-      "User",
-      "globalStorage",
-    );
+    path.join(DATA_DIR, "User", "globalStorage");
   _store = new AccountStore(gsPath);
   _loadSnapshots(); // 恢复上次快照 (首次扫描就能检测变化)
   _loadInUse(_store); // 恢复使用中标记 (重启不丢失)
@@ -5169,6 +7433,37 @@ function activate(context) {
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider("wam.panel", _sidebarProvider),
   );
+
+  // ── v15.1: 网络环境变化感知 — 反者道之动·代理变则缓存废 ──
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (
+        e.affectsConfiguration("http.proxy") ||
+        e.affectsConfiguration("http.proxyStrictSSL")
+      ) {
+        log("network: http.proxy config changed → invalidate proxy cache");
+        _invalidateProxyCache();
+      }
+    }),
+  );
+
+  // ── v16: Bridge延迟唤醒 — sidebar未就绪时静默唤醒, 不创建editor panel ──
+  _bridgeEnsureTimer = setTimeout(() => {
+    _bridgeEnsureTimer = null;
+    if (!_bridgeReady && isWamMode()) {
+      log("bridge: sidebar未在8s内就绪 → 静默唤醒侧边栏");
+      try {
+        vscode.commands.executeCommand("wam.panel.focus");
+      } catch (e) {
+        log(`bridge: sidebar唤醒失败: ${e.message}`);
+      }
+    }
+  }, 8000);
+  context.subscriptions.push({
+    dispose() {
+      if (_bridgeEnsureTimer) clearTimeout(_bridgeEnsureTimer);
+    },
+  });
 
   // ── 状态栏小标 (右下角) ──
   _statusBarItem = vscode.window.createStatusBarItem(
@@ -5204,9 +7499,11 @@ function activate(context) {
         const h = _store.getHealth(a);
         const inUse = _store.isInUse(a.email) ? " [使用中]" : "";
         const liveTag = h.hasSnap ? "●" : "";
+        // v17.8 道法自然: QuickPick 描述纯按真实 D/W + h.plan (Trial/Pro/Devin未验等) 渲染
+        const description = `${liveTag}D${Math.round(h.daily)}%·W${Math.round(h.weekly)}% ${h.plan}`;
         return {
           label: `${idx + 1}. ${a.email}${inUse}`,
-          description: `${liveTag}D${Math.round(h.daily)}%·W${Math.round(h.weekly)}% ${h.plan}`,
+          description,
           index: i,
         };
       });
@@ -5246,8 +7543,6 @@ function activate(context) {
               `WAM: 已手动切换到 ${result.account}`,
             );
             _ensureEngines();
-          } else {
-            vscode.window.showErrorMessage(`WAM: ${result.error}`);
           }
         } finally {
           _switching = false;
@@ -5263,6 +7558,386 @@ function activate(context) {
         `WAM: 已刷新 ${_store.pwCount()} 个账号`,
       );
     }),
+    // v17.3 道法自然: 从归档恢复 — 挽救被秒删的账号
+    vscode.commands.registerCommand("wam.restore", async () => {
+      const archPath = path.join(
+        path.dirname(_store._path),
+        "_wam_purged.json",
+      );
+      if (!fs.existsSync(archPath)) {
+        vscode.window.showInformationMessage("WAM: 归档文件不存在, 无可恢复");
+        return;
+      }
+      let arch = [];
+      try {
+        arch = JSON.parse(fs.readFileSync(archPath, "utf8"));
+        if (!Array.isArray(arch)) arch = [];
+      } catch (e) {
+        vscode.window.showErrorMessage(`WAM: 归档文件解析失败: ${e.message}`);
+        return;
+      }
+      if (arch.length === 0) {
+        vscode.window.showInformationMessage("WAM: 归档为空");
+        return;
+      }
+      // 按归档时间倒序
+      arch.sort((a, b) => (b._purgedAt || 0) - (a._purgedAt || 0));
+      const items = arch.map((a, i) => {
+        const age = a._purgedAt
+          ? Math.round((Date.now() - a._purgedAt) / 86400000) + "天前"
+          : "?";
+        return {
+          label: `${a.email}`,
+          description: `${age} · ${a._purgeReason || "?"}`,
+          detail: `plan=${(a.usage || {}).plan || "?"} D${(a.usage || {}).daily || 0} W${(a.usage || {}).weekly || 0}`,
+          acc: a,
+          idx: i,
+        };
+      });
+      const picks = await vscode.window.showQuickPick(items, {
+        placeHolder: `选择要恢复的账号 (共 ${arch.length} 个归档, 可多选)`,
+        canPickMany: true,
+      });
+      if (!picks || picks.length === 0) return;
+      const poolEmails = new Set(
+        _store.accounts.map((a) => (a.email || "").toLowerCase()),
+      );
+      let restored = 0,
+        dup = 0;
+      const restoredEmails = new Set();
+      for (const p of picks) {
+        const em = (p.acc.email || "").toLowerCase();
+        if (poolEmails.has(em)) {
+          dup++;
+          continue;
+        }
+        // 清除失败标记, 给账号新机会
+        const clean = { ...p.acc };
+        delete clean._verifyFailed;
+        delete clean._verifyFailedAt;
+        delete clean._verifyFailedCount;
+        delete clean._switchFailed;
+        delete clean._switchFailedAt;
+        delete clean._switchFailedCount;
+        delete clean._purgeReason;
+        delete clean._purgedAt;
+        _store.accounts.push(clean);
+        restoredEmails.add(em);
+        restored++;
+      }
+      // 从归档中移除已恢复的
+      const newArch = arch.filter(
+        (a) => !restoredEmails.has((a.email || "").toLowerCase()),
+      );
+      try {
+        fs.writeFileSync(archPath, JSON.stringify(newArch, null, 2), "utf8");
+      } catch (e) {
+        log(`restore: archive rewrite fail: ${e.message}`);
+      }
+      _store.save();
+      refreshAll();
+      vscode.window.showInformationMessage(
+        `WAM: 已恢复 ${restored} 个账号 (${dup} 个与池中重复已跳过). 可重新测试登录.`,
+      );
+    }),
+    // v17.3 道法自然: 写盘诊断 — 主动探查 save 失败根因
+    vscode.commands.registerCommand("wam.diagWrite", async () => {
+      const checks = [];
+      // 1. 主路径
+      const primaryPath = _store._path;
+      const primaryDir = path.dirname(primaryPath);
+      const sharedPath = _store._sharedPath;
+      const sharedDir = sharedPath ? path.dirname(sharedPath) : null;
+      const wamDir = WAM_DIR;
+      const purgedPath = path.join(primaryDir, "_wam_purged.json");
+      // 测试 4 个关键路径的写入能力
+      for (const [name, dir, file] of [
+        ["primary accounts dir", primaryDir, primaryPath],
+        ["shared accounts dir", sharedDir, sharedPath],
+        ["wam-hot log dir", wamDir, LOG_FILE],
+        ["purge archive dir", primaryDir, purgedPath],
+      ]) {
+        if (!dir) {
+          checks.push({ name, status: "skip", note: "(未配置)" });
+          continue;
+        }
+        const probe = path.join(dir, `_wam_write_probe_${Date.now()}.txt`);
+        try {
+          fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(probe, "ok", "utf8");
+          const read = fs.readFileSync(probe, "utf8");
+          fs.unlinkSync(probe);
+          // 测真实文件 append 1 字节
+          let appendOk = false,
+            appendErr = null;
+          try {
+            if (fs.existsSync(file)) {
+              const stat = fs.statSync(file);
+              const orig = fs.readFileSync(file);
+              fs.writeFileSync(file, orig); // 不变原文件, 但测 write 能力
+              appendOk = true;
+            } else {
+              appendOk = null; // 文件不存在, 无法测
+            }
+          } catch (e) {
+            appendErr = `${e.code || ""} ${e.message}`;
+          }
+          checks.push({
+            name,
+            status: "ok",
+            dir,
+            file,
+            probe: read === "ok" ? "R/W ok" : "WRITE ok but READ bad",
+            existingWrite:
+              appendOk === null
+                ? "N/A (file absent)"
+                : appendOk
+                  ? "OK"
+                  : `FAIL: ${appendErr}`,
+          });
+        } catch (e) {
+          checks.push({
+            name,
+            status: "fail",
+            dir,
+            file,
+            error: `${e.code || ""} ${e.message}`,
+          });
+        }
+      }
+      // 2. 各关键文件当前 mtime
+      const fileInfo = [];
+      for (const [name, p] of [
+        ["primary accounts", primaryPath],
+        ["shared accounts", sharedPath],
+        ["purge archive", purgedPath],
+        ["wam log", LOG_FILE],
+      ]) {
+        if (!p) {
+          fileInfo.push({ name, note: "(not configured)" });
+          continue;
+        }
+        try {
+          if (!fs.existsSync(p)) {
+            fileInfo.push({ name, exists: false, path: p });
+          } else {
+            const st = fs.statSync(p);
+            fileInfo.push({
+              name,
+              exists: true,
+              path: p,
+              size: st.size,
+              mtime: new Date(st.mtimeMs).toISOString(),
+              age_sec: Math.round((Date.now() - st.mtimeMs) / 1000),
+            });
+          }
+        } catch (e) {
+          fileInfo.push({ name, path: p, error: e.message });
+        }
+      }
+      // 3. 内存 vs 磁盘差
+      let diskCount = -1;
+      try {
+        if (fs.existsSync(primaryPath)) {
+          diskCount = JSON.parse(fs.readFileSync(primaryPath, "utf8")).length;
+        }
+      } catch {}
+      const memCount = _store.accounts.length;
+      const divergence = { memCount, diskCount, delta: memCount - diskCount };
+      // 4. 强制触发 save + 观察是否生效
+      const beforeMtime = fs.existsSync(primaryPath)
+        ? fs.statSync(primaryPath).mtimeMs
+        : 0;
+      _store.save();
+      const afterMtime = fs.existsSync(primaryPath)
+        ? fs.statSync(primaryPath).mtimeMs
+        : 0;
+      const saveDetection = {
+        before: new Date(beforeMtime).toISOString(),
+        after: new Date(afterMtime).toISOString(),
+        saveWorked: afterMtime > beforeMtime,
+      };
+      // 输出诊断报告到新文档
+      const report = {
+        _timestamp: new Date().toISOString(),
+        _store_path: primaryPath,
+        _shared_path: sharedPath,
+        _wam_hot: wamDir,
+        checks,
+        files: fileInfo,
+        divergence,
+        saveDetection,
+      };
+      const doc = await vscode.workspace.openTextDocument({
+        content: JSON.stringify(report, null, 2),
+        language: "json",
+      });
+      await vscode.window.showTextDocument(doc);
+      const msg = saveDetection.saveWorked
+        ? `WAM 写盘诊断: save() OK (内存${memCount} 磁盘${diskCount})`
+        : `WAM 写盘诊断: save() 未更新 mtime! 检查 checks[*].existingWrite 和 error 字段`;
+      (saveDetection.saveWorked
+        ? vscode.window.showInformationMessage
+        : vscode.window.showWarningMessage)(msg);
+    }),
+    // v17.5 道法自然: 一键复活 — 清空内存黑名单 + 重置失败计数 + Devin 探测
+    vscode.commands.registerCommand("wam.clearBlacklist", async () => {
+      const before = _tokenPoolBlacklist.size;
+      _tokenPoolBlacklist.clear();
+      _poolFailStreak.clear();
+      // 扫描所有有失败标记的账号, 探测 Devin-only
+      const targets = _store.accounts.filter(
+        (a) =>
+          a &&
+          a.password &&
+          a._authSystem !== "devin" &&
+          (a._verifyFailed || a._verifyFailedCount > 0),
+      );
+      vscode.window.showInformationMessage(
+        `WAM: 清空内存黑名单 (原 ${before}), 对 ${targets.length} 个疑似账号做 Devin 探测...`,
+      );
+      let devinCount = 0,
+        errCount = 0;
+      for (const acc of targets) {
+        try {
+          // v17.5 Level 2 升级: 不止 login, 全链路验证 PostAuth 也通
+          const ds = await _devinFullSwitch(acc.email, acc.password);
+          if (ds.ok) {
+            acc._authSystem = "devin";
+            acc._devinUserId = ds.userId;
+            acc._devinAccountId = ds.accountId;
+            acc._devinOrgId = ds.primaryOrgId;
+            acc._devinDetectedAt = Date.now();
+            acc._devinSessionAt = Date.now();
+            // v17.5 补完+: 打验证时戳 + _devinVerified 标记
+            //   供 getHealth 识别 plan="Devin" / getBestIndex 独立评分
+            acc._devinVerified = true;
+            acc._lastVerified = Date.now();
+            delete acc._verifyFailed;
+            delete acc._verifyFailedAt;
+            acc._verifyFailedCount = 0;
+            delete acc._unverified;
+            delete acc._switchFailed;
+            delete acc._switchFailedAt;
+            acc._switchFailedCount = 0;
+            // v17.8 道法自然: clearBlacklist → 同步 fetchAccountQuota (此流程本身阻塞, 等拿完)
+            await fetchAccountQuota(acc.email, acc.password).catch(() => {});
+            devinCount++;
+            log(
+              `clearBlacklist: ${acc.email} → Devin 全链路通 (uid=${ds.userId} accountId=${(ds.accountId || "").substring(0, 16)}...)`,
+            );
+          } else {
+            // 重置失败计数给 Firebase 再 3 次机会
+            acc._verifyFailedCount = 0;
+            delete acc._verifyFailed;
+            delete acc._verifyFailedAt;
+            errCount++;
+            log(
+              `clearBlacklist: ${acc.email} → Devin ${ds.stage || ""} 也拒绝 (${ds.error}), 重置 Firebase 计数`,
+            );
+          }
+        } catch (e) {
+          errCount++;
+        }
+        await new Promise((r) => setTimeout(r, 500)); // 限速
+      }
+      _store.save();
+      refreshAll();
+      vscode.window.showInformationMessage(
+        `WAM: 复活完成 — ${devinCount} 个 Devin-only 已识别, ${errCount} 个仍需检查, 池已解锁`,
+      );
+    }),
+    // v17.5 Level 2: Devin 切号链路诊断 — 不真正注入, 仅验证链路完整
+    // 用途: 升级前验证代码健康度, 或故障排查"切号失败"时锁定是登录/PostAuth/注入哪一环
+    vscode.commands.registerCommand("wam.testDevinSwitch", async () => {
+      const picks = _store.accounts
+        .filter((a) => a && a.email && a.password)
+        .map((a) => ({
+          label: `${a.email}`,
+          description: a._authSystem === "devin" ? "[Devin-only]" : "",
+          email: a.email,
+          password: a.password,
+        }));
+      if (picks.length === 0) {
+        vscode.window.showWarningMessage("WAM: 账号池为空");
+        return;
+      }
+      const pick = await vscode.window.showQuickPick(picks, {
+        placeHolder: "选择要测试 Devin 切号链路的账号 (仅验证, 不注入)",
+      });
+      if (!pick) return;
+      vscode.window.showInformationMessage(
+        `WAM: 测试 ${pick.email} Devin 链路...`,
+      );
+      const t0 = Date.now();
+      // Step 1: devinLogin
+      const dl = await _devinLogin(pick.email, pick.password);
+      if (!dl.ok) {
+        vscode.window.showErrorMessage(
+          `WAM 测试: ${pick.email} 登录失败 (${dl.error}) — 此账号不在 Devin 体系 [${Date.now() - t0}ms]`,
+        );
+        return;
+      }
+      // Step 2: WindsurfPostAuth
+      const pa = await _devinPostAuth(dl.auth1Token);
+      if (!pa.ok) {
+        vscode.window.showErrorMessage(
+          `WAM 测试: ${pick.email} PostAuth 失败 (${pa.error}) — 登录通但换 sessionToken 失败 [${Date.now() - t0}ms]`,
+        );
+        return;
+      }
+      const ms = Date.now() - t0;
+      const sessPrefix = pa.sessionToken.split("$")[0];
+      log(
+        `testDevinSwitch: ${pick.email} full chain OK (auth1=${dl.auth1Token.substring(0, 20)}..., session=${sessPrefix}..., accountId=${(pa.accountId || "").substring(0, 16)}...) ${ms}ms`,
+      );
+      vscode.window.showInformationMessage(
+        `WAM 测试 ✓ ${pick.email} Devin 全链路通 [${ms}ms]\n` +
+          `  user_id: ${dl.userId}\n` +
+          `  accountId: ${pa.accountId}\n` +
+          `  primaryOrgId: ${pa.primaryOrgId}\n` +
+          `  sessionToken 前缀: ${sessPrefix}$... (Windsurf IDE 原生接受)\n` +
+          `  结论: 此账号可直接切号 (切换时会用 sessionToken 注入)`,
+        { modal: true },
+      );
+    }),
+    // v17.10 太上·不知有之: wam.checkUpdate — 手动触发自动更新检查 (用户主动 · 诊断用)
+    vscode.commands.registerCommand("wam.checkUpdate", async () => {
+      const source = _getAutoUpdateSource();
+      if (!source) {
+        const choice = await vscode.window.showWarningMessage(
+          "WAM: 未配置自动更新源\n\n" +
+            "在 settings.json 中添加 wam.autoUpdate.source:\n" +
+            '  · SMB 路径: "\\\\\\\\<host>\\\\<share>\\\\wam-bundle"\n' +
+            '  · HTTPS URL (默认已开启主仓 windsurf-assistant jsDelivr): "https://cdn.jsdelivr.net/gh/zhouyoukang/windsurf-assistant@main/wam-bundle/"\n' +
+            '  · 或自定 HTTPS URL: "https://<your-host>/wam-bundle"',
+          { modal: true },
+          "打开 settings.json",
+        );
+        if (choice === "打开 settings.json") {
+          await vscode.commands.executeCommand(
+            "workbench.action.openSettingsJson",
+          );
+        }
+        return;
+      }
+      vscode.window.showInformationMessage(`WAM: 正在检查更新 (${source})...`);
+      const r = await _autoUpdateCheck(true);
+      if (r.ok && r.updated) {
+        // Step 3 内部已显示通知
+      } else if (r.ok && !r.updated) {
+        vscode.window.showInformationMessage(
+          `WAM: 当前 v${r.localVer} 已是最新 (远端 v${r.remoteVer})`,
+        );
+      } else {
+        vscode.window.showErrorMessage(
+          `WAM: 更新失败 · ${r.reason || "unknown"}${r.error ? " (" + r.error + ")" : ""}`,
+        );
+      }
+    }),
+    // v17.11 太上·不知有之: wam.showConfig 命令已删除 (违背"用户零感知"原则)
+    // _adaptive 自适应运行时自动调节所有性能参数 · 无需用户查看
+    // ops 诊断如需查看请参考 log 中 _adaptive.snapshot() 输出
     vscode.commands.registerCommand("wam.addAccount", async () => {
       const input = await vscode.window.showInputBox({
         prompt: "粘贴账号 (支持多种格式)",
@@ -5378,7 +8053,7 @@ function activate(context) {
     }),
     vscode.commands.registerCommand("wam.wamMode", async () => {
       saveMode("wam");
-      // v7.4: 回切WAM时重启后台设施
+      // v7.4: 回切WAM时重启所有后台设施
       _restartBackgroundServices();
       if (_store.activeIndex < 0 && _store.pwCount() > 0) {
         const bestI = _store.getBestIndex(-1, false);
@@ -5420,7 +8095,7 @@ function activate(context) {
       const inUseEmails = [..._store._inUse.keys()]
         .map((e) => e.substring(0, 15))
         .join(", ");
-      let msg = `WAM v14.0.0 | ${stats.pwCount}号 D${stats.totalD}·W${stats.totalW} | mode=${_mode} | 监测${_totalMonitorCycles}轮·${_totalChangesDetected}次变动·${_store.switchCount}次切号 | inst=${_instanceId}`;
+      let msg = `WAM v${WAM_VERSION} | ${stats.pwCount}号 D${stats.totalD}·W${stats.totalW} | mode=${_mode} | 监测${_totalMonitorCycles}轮·${_totalChangesDetected}次变动·${_store.switchCount}次切号 | inst=${_instanceId}`;
       if (activeAcc) msg += ` | 活跃: ${activeAcc.email.substring(0, 20)}`;
       if (_store._inUse.size > 0) msg += ` | 使用中: ${inUseEmails}`;
       vscode.window.showInformationMessage(msg);
@@ -5460,9 +8135,10 @@ function activate(context) {
         const newText = lastChange.text;
         if (!newText || newText.length < 20 || newText.length > 500) return;
         if (/rate.?limit.?exceeded|Rate limit error/i.test(newText)) {
-          const cooldown = Date.now() - _lastSwitchTime < 10000;
+          const cooldown =
+            Date.now() - _lastSwitchTime < _getRateLimitCooldownMs();
           const rlInjectCd =
-            Date.now() - _lastInjectFail < INJECT_FAIL_COOLDOWN; // v13.4
+            Date.now() - _lastInjectFail < _getInjectFailCooldown(); // v13.4
           if (cooldown || rlInjectCd) return; // 刚切过或注入失败冷却中
           log(
             `🚨 rate-limit intercepted in document! Triggering proactive switch...`,
@@ -5540,7 +8216,7 @@ function activate(context) {
         _store.activeIndex >= 0 ? _store.get(_store.activeIndex) : null;
       _writeInstanceClaim(activeAcc?.email || "");
       _cleanDeadInstances();
-    }, INSTANCE_HEARTBEAT_MS);
+    }, _getInstanceHeartbeatMs());
   }
   context.subscriptions.push({
     dispose() {
@@ -5682,12 +8358,18 @@ function deactivate() {
     clearInterval(_reloadWatcher);
     _reloadWatcher = null;
   }
+  // v15.1: bridge cleanup
+  if (_bridgeEnsureTimer) {
+    clearTimeout(_bridgeEnsureTimer);
+    _bridgeEnsureTimer = null;
+  }
+  _bridgeReady = false;
+  _bridgeReadyCallbacks = [];
   _prewarmedToken = null;
   _switching = false;
   if (_editorPanel) {
     _editorPanel.dispose();
     _editorPanel = null;
-    _bridgeReady = false;
   }
   // 关闭前存储账号数据
   try {
