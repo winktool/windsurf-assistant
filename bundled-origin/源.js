@@ -49,10 +49,14 @@ const zlib = require("zlib");
 // ═══════════════════════════════════════════════════════════
 // 配置 · 常量
 // ═══════════════════════════════════════════════════════════
+// v17.24 · 全量软编码 · env 可覆盖 · 道法自然 · 唯变所适
 const PORT = parseInt(process.env.ORIGIN_PORT || "8889", 10);
-const UPSTREAM_MGMT = "server.self-serve.windsurf.com";
-const UPSTREAM_INFER = "inference.codeium.com";
-const CLOUD_PORT = 443;
+const BIND_HOST = process.env.ORIGIN_BIND_HOST || "127.0.0.1";
+const UPSTREAM_MGMT =
+  process.env.ORIGIN_UPSTREAM_MGMT || "server.self-serve.windsurf.com";
+const UPSTREAM_INFER =
+  process.env.ORIGIN_UPSTREAM_INFER || "inference.codeium.com";
+const CLOUD_PORT = parseInt(process.env.ORIGIN_CLOUD_PORT || "443", 10);
 
 // inference 服务名集 (Connect-RPC 路径的 package.Service 部分)
 const INFERENCE_SERVICES = new Set([
@@ -811,7 +815,7 @@ server.on("listening", () => {
   log(` infer  → https://${UPSTREAM_INFER}`);
   log(` mode=${SP_MODE} · pid=${process.pid}`);
   log(` 道德经 chars=${DAO_DE_JING_81.length}`);
-  log(` 控制面: http://127.0.0.1:${PORT}/origin/ping`);
+  log(` 控制面: http://${BIND_HOST}:${PORT}/origin/ping`);
   log("═══════════════════════════════════════════════════════");
 });
 
@@ -822,7 +826,7 @@ server.on("error", (e) => {
 
 // --test 跳 listen, 便于 require 做单元验证
 if (!process.argv.includes("--test")) {
-  server.listen(PORT, "127.0.0.1");
+  server.listen(PORT, BIND_HOST);
 }
 
 process.on("uncaughtException", (e) =>

@@ -2,7 +2,7 @@
   "name": "windsurf-assistant",
   "displayName": "Windsurf Assistant · 道Agent + 无感切号",
   "description": "道Agent 本源 (道德经 SP 注入 · 化除 rules/skills/workflows/memories 侧信道) + 无感切号 (百号轮转 · 额度耗尽自切) · 二核合一 · 道法自然",
-  "version": "17.23.0",
+  "version": "17.24.0",
   "publisher": "zhouyoukang",
   "repository": { "type": "git", "url": "https://github.com/zhouyoukang/windsurf-assistant.git" },
   "homepage": "https://github.com/zhouyoukang/windsurf-assistant",
@@ -112,7 +112,15 @@
         "wam.autoUpdate.source": { "type": "string", "default": "", "description": "autoUpdate 源: SMB 路径 或 HTTPS URL (空 = 走默认公开 jsDelivr 主仓)" },
         "wam.autoUpdate.checkIntervalMs": { "type": "number", "default": 3600000, "description": "autoUpdate 检查间隔 (默认 1h·最小 1min)" },
         "wam.autoUpdate.startDelayMs": { "type": "number", "default": 10000, "description": "启动后首次 autoUpdate 延迟 (ms)" },
-        "wam.autoUpdate.notifyUser": { "type": "boolean", "default": false, "description": "v17.10 完成自更新后是否弹窗通知用户 (太上不知有之默认静默)" }
+        "wam.autoUpdate.notifyUser": { "type": "boolean", "default": false, "description": "v17.10 完成自更新后是否弹窗通知用户 (太上不知有之默认静默)" },
+        "wam.origin.defaultPort": { "type": "number", "default": 8889, "description": "本源反代起始端口 (空闲扫描起点)" },
+        "wam.origin.portMax": { "type": "number", "default": 8999, "description": "本源反代端口扫描上界" },
+        "wam.origin.bindHost": { "type": "string", "default": "127.0.0.1", "description": "本源反代绑定地址 (通常 127.0.0.1)" },
+        "wam.origin.spawnReadyRetries": { "type": "number", "default": 15, "description": "spawn 后等待 proxy 就绪的最大轮次 (每轮 200ms)" },
+        "wam.origin.anchorTimeout": { "type": "number", "default": 15000, "description": "锚.py 执行超时 (ms)" },
+        "wam.origin.fetchTimeout": { "type": "number", "default": 2000, "description": "Origin 控制面 HTTP 超时 (ms)" },
+        "wam.origin.upstreamMgmt": { "type": "string", "default": "server.self-serve.windsurf.com", "description": "管理上游域名" },
+        "wam.origin.upstreamInfer": { "type": "string", "default": "inference.codeium.com", "description": "推理上游域名" }
       }
     }
   }

@@ -64,8 +64,9 @@ SECRET_KEY_APIURL = (
     '"key":"windsurf_auth.apiServerUrl"}'
 )
 
-DEFAULT_ANCHOR = "http://127.0.0.1:8889"
-CLOUD_ORIGIN = "https://server.self-serve.windsurf.com"
+# v17.24 · 全量软编码 · env 可覆盖 · 道法自然
+DEFAULT_ANCHOR = os.environ.get("ORIGIN_ANCHOR_URL", "http://127.0.0.1:8889")
+CLOUD_ORIGIN = os.environ.get("ORIGIN_CLOUD_MGMT", "https://server.self-serve.windsurf.com")
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -329,7 +330,7 @@ def op_restore() -> None:
 SETTINGS_JSON = APPDATA / "Windsurf/User/settings.json"
 SETTINGS_BACKUP = SCRIPT_DIR / "_settings_backup.json"
 INFERENCE_KEY = "codeium.inferenceApiServerUrl"
-DEFAULT_INFERENCE_ANCHOR = "http://127.0.0.1:8889/i"
+DEFAULT_INFERENCE_ANCHOR = os.environ.get("ORIGIN_INFERENCE_ANCHOR", f"{DEFAULT_ANCHOR}/i")
 
 
 def _load_settings() -> dict:

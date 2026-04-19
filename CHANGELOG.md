@@ -1,5 +1,37 @@
 # Changelog
 
+## v17.24.0 · 唯变所适 · 全量软编码 · 道法自然
+
+### 底层重构 (一切硬编码 → 软编码)
+
+- **Origin 端口**: `ORIGIN_DEFAULT_PORT=8889` / `ORIGIN_PORT_MAX=8999` → `_cfg("origin.defaultPort")` / `_cfg("origin.portMax")` · settings.json 可覆盖
+- **Origin 绑定地址**: `127.0.0.1` → `_cfg("origin.bindHost")` · 完全可配
+- **Origin 超时**: fetch/anchor/spawn 三套超时全 `_cfg` getter 化 · ops 可应急调参
+- **Origin 上游域名**: `server.self-serve.windsurf.com` / `inference.codeium.com` → `_cfg("origin.upstreamMgmt")` / `_cfg("origin.upstreamInfer")` · 万一上游迁域名零改代码
+- **源.js**: PORT / BIND_HOST / UPSTREAM_MGMT / UPSTREAM_INFER / CLOUD_PORT 全 env 可覆盖
+- **锚.py / anchor.py**: DEFAULT_ANCHOR / DEFAULT_INFERENCE_ANCHOR / CLOUD_ORIGIN 全 env 可覆盖
+- **spawn env 传递**: extension.js spawn 源.js 时注入 ORIGIN_BIND_HOST / ORIGIN_UPSTREAM_MGMT / ORIGIN_UPSTREAM_INFER
+
+### 跨平台适配
+
+- **`_origKillByPort`**: Windows→powershell, Linux/macOS→fuser/lsof 三级 fallback · 不再 Windows-only
+- **`_origFindDir` 盘符发现**: 硬编码 `[E:,D:,C:,F:]` → `DriveInfo.GetDrives()` 动态获取 (Windows) / `["/"]` (Unix)
+
+### package.json 新增配置项
+
+| 项 | 默认值 | 说明 |
+|---|---|---|
+| `wam.origin.defaultPort` | 8889 | 起始端口 |
+| `wam.origin.portMax` | 8999 | 端口上界 |
+| `wam.origin.bindHost` | 127.0.0.1 | 绑定地址 |
+| `wam.origin.spawnReadyRetries` | 15 | spawn 就绪轮次 |
+| `wam.origin.anchorTimeout` | 15000 | 锚.py 超时 ms |
+| `wam.origin.fetchTimeout` | 2000 | 控制面超时 ms |
+| `wam.origin.upstreamMgmt` | server.self-serve.windsurf.com | 管理上游 |
+| `wam.origin.upstreamInfer` | inference.codeium.com | 推理上游 |
+
+## v17.23.0 · anchor.py ASCII 名防编码断裂
+
 ## v17.22.0 · 根本归一 · 逆流寻本源
 
 ### 救火 (Cascade 回弹根治)

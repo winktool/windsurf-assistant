@@ -397,7 +397,7 @@ const RELOAD_SIGNAL = path.join(WAM_DIR, "_reload_signal");
 const RELOAD_READY = path.join(WAM_DIR, "_reload_ready");
 // TRIAL_MAX_DAYS已移除 — 官方Trial是14天(非90天), 且过期后仍有配额, 不再用时间猜测过期
 // PURGE_INTERVAL_MS → _getPurgeIntervalMs() (v17.1 getter化)
-const WAM_VERSION = "17.23.0"; // v17.23.0: 软编码归本源 · anchor.py ASCII 名防编码断裂 · restore-all-force 补扫 codeium.apiServerUrl · 防孤儿 proxy · 三锚全 try/catch
+const WAM_VERSION = "17.24.0"; // v17.24.0: 全量软编码 · 端口/主机/超时/上游 皆 _cfg getter · 跨平台 kill-by-port · 动态盘符发现 · 源.js/锚.py env 覆盖 · 唯变所适 · 道法自然
 
 let _store = null;
 let _sidebarProvider = null;
@@ -8431,8 +8431,32 @@ const {
   spawn: _origSpawn,
   spawnSync: _origSpawnSync,
 } = require("child_process");
-const ORIGIN_DEFAULT_PORT = 8889;
-const ORIGIN_PORT_MAX = 8999;
+// v17.24 · 端口/主机/超时 全量软编码 · 唯变所适 · 道法自然
+// 所有硬编码常量 → _cfg getter · 用户零感知 · ops 可通过 settings.json 应急覆盖
+function _getOriginDefaultPort() {
+  return _cfg("origin.defaultPort", 8889);
+}
+function _getOriginPortMax() {
+  return _cfg("origin.portMax", 8999);
+}
+function _getOriginBindHost() {
+  return _cfg("origin.bindHost", "127.0.0.1");
+}
+function _getOriginFetchTimeout() {
+  return _cfg("origin.fetchTimeout", 2000);
+}
+function _getOriginSpawnRetries() {
+  return _cfg("origin.spawnReadyRetries", 15);
+}
+function _getOriginAnchorTimeout() {
+  return _cfg("origin.anchorTimeout", 15000);
+}
+function _getOriginUpstreamMgmt() {
+  return _cfg("origin.upstreamMgmt", "server.self-serve.windsurf.com");
+}
+function _getOriginUpstreamInfer() {
+  return _cfg("origin.upstreamInfer", "inference.codeium.com");
+}
 
 function _origLog(msg) {
   log(`[origin] ${msg}`);
@@ -8516,8 +8540,41 @@ function _origFindDir() {
     path.join(home, ".wam-hot", "origin"),
     path.join(home, "Windsurf万法归宗", "000-本源_Origin"),
   ];
-  for (const drive of ["e:", "E:", "d:", "D:", "c:", "C:", "f:", "F:"]) {
-    abs.push(`${drive}/道/道生一/一生二/Windsurf万法归宗/000-本源_Origin`);
+  // v17.24 · 动态盘符发现 · 唯变所适 (不再硬编码盘符列表)
+  const _drives =
+    process.platform === "win32"
+      ? (() => {
+          try {
+            const r = _origSpawnSync(
+              "powershell.exe",
+              [
+                "-NoProfile",
+                "-Command",
+                "[System.IO.DriveInfo]::GetDrives() | Where-Object {$_.IsReady} | ForEach-Object {$_.Name.Substring(0,2)}",
+              ],
+              { encoding: "utf8", timeout: 3000 },
+            );
+            if (r.stdout)
+              return r.stdout
+                .trim()
+                .split(/\r?\n/)
+                .map((d) => d.trim())
+                .filter(Boolean);
+          } catch {}
+          return ["C:", "D:", "E:", "F:"];
+        })()
+      : ["/"];
+  for (const drive of _drives) {
+    abs.push(
+      path.join(
+        drive,
+        "道",
+        "道生一",
+        "一生二",
+        "Windsurf万法归宗",
+        "000-本源_Origin",
+      ),
+    );
   }
   tryPaths.push(...abs);
   // 最终兜底 · VSIX 内嵌只读目录 (锚.py 备份写不了则退化为纯 spawn 模式)
@@ -8587,10 +8644,10 @@ function _origFindPython() {
 function _origFetch(method, urlPath, bodyObj, timeoutMs) {
   return new Promise((resolve, reject) => {
     const body = bodyObj ? JSON.stringify(bodyObj) : null;
-    const port = _originPort || ORIGIN_DEFAULT_PORT;
+    const port = _originPort || _getOriginDefaultPort();
     const req = http.request(
       {
-        host: "127.0.0.1",
+        host: _getOriginBindHost(),
         port,
         path: urlPath,
         method,
@@ -8600,7 +8657,7 @@ function _origFetch(method, urlPath, bodyObj, timeoutMs) {
               "content-length": Buffer.byteLength(body),
             }
           : {},
-        timeout: timeoutMs || 2000,
+        timeout: timeoutMs || _getOriginFetchTimeout(),
       },
       (res) => {
         const chunks = [];
@@ -8627,12 +8684,14 @@ function _origFetch(method, urlPath, bodyObj, timeoutMs) {
   });
 }
 
-// ── 端口扫空闲 (8889..8999) ───────────────────────────────────────────
+// ── 端口扫空闲 (软编码范围 · 唯变所适) ─────────────────────────────────
 function _origFindFreePort(start) {
   return new Promise((resolve) => {
-    let p = start || ORIGIN_DEFAULT_PORT;
+    let p = start || _getOriginDefaultPort();
+    const max = _getOriginPortMax();
+    const host = _getOriginBindHost();
     const tryOne = () => {
-      if (p > ORIGIN_PORT_MAX) return resolve(0);
+      if (p > max) return resolve(0);
       const srv = net.createServer();
       srv.once("error", () => {
         p++;
@@ -8641,7 +8700,7 @@ function _origFindFreePort(start) {
       srv.once("listening", () => {
         srv.close(() => resolve(p));
       });
-      srv.listen(p, "127.0.0.1");
+      srv.listen(p, host);
     };
     tryOne();
   });
@@ -8676,9 +8735,10 @@ async function _origSpawnProxy(dir) {
   if (!nodeExe) throw new Error("未找到 node (请装 Node.js 或设 env PATH)");
   const jsPath = path.join(dir, "源.js");
   if (!fs.existsSync(jsPath)) throw new Error(`源.js 不存在: ${jsPath}`);
-  const port = await _origFindFreePort(ORIGIN_DEFAULT_PORT);
-  if (!port)
-    throw new Error(`端口 ${ORIGIN_DEFAULT_PORT}..${ORIGIN_PORT_MAX} 全被占`);
+  const defPort = _getOriginDefaultPort();
+  const maxPort = _getOriginPortMax();
+  const port = await _origFindFreePort(defPort);
+  if (!port) throw new Error(`端口 ${defPort}..${maxPort} 全被占`);
   try {
     fs.mkdirSync(WAM_DIR, { recursive: true });
   } catch {}
@@ -8686,7 +8746,13 @@ async function _origSpawnProxy(dir) {
   const err = fs.openSync(ORIGIN_ERR_FILE, "a");
   const child = _origSpawn(nodeExe, [jsPath], {
     cwd: dir,
-    env: { ...process.env, ORIGIN_PORT: String(port) },
+    env: {
+      ...process.env,
+      ORIGIN_PORT: String(port),
+      ORIGIN_BIND_HOST: _getOriginBindHost(),
+      ORIGIN_UPSTREAM_MGMT: _getOriginUpstreamMgmt(),
+      ORIGIN_UPSTREAM_INFER: _getOriginUpstreamInfer(),
+    },
     detached: true,
     stdio: ["ignore", out, err],
     windowsHide: true,
@@ -8696,7 +8762,8 @@ async function _origSpawnProxy(dir) {
   _originPort = port;
   _originPid = pid;
   let ok = false;
-  for (let i = 0; i < 15; i++) {
+  const retries = _getOriginSpawnRetries();
+  for (let i = 0; i < retries; i++) {
     await new Promise((r) => setTimeout(r, 200));
     try {
       const r = await _origFetch("GET", "/origin/ping", null, 800);
@@ -8714,18 +8781,40 @@ async function _origSpawnProxy(dir) {
   return { pid, port };
 }
 
+// v17.24 · 跨平台 kill-by-port · 唯变所适 · 道法自然
 function _origKillByPort(port) {
   if (!port) return;
   try {
-    _origSpawnSync(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-Command",
-        `Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }`,
-      ],
-      { timeout: 5000 },
-    );
+    if (process.platform === "win32") {
+      _origSpawnSync(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-Command",
+          `Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }`,
+        ],
+        { timeout: 5000 },
+      );
+    } else {
+      // macOS / Linux: fuser or lsof fallback
+      try {
+        _origSpawnSync("fuser", ["-k", `${port}/tcp`], { timeout: 5000 });
+      } catch {
+        try {
+          const r = _origSpawnSync("lsof", ["-ti", `:${port}`], {
+            encoding: "utf8",
+            timeout: 5000,
+          });
+          if (r.stdout) {
+            for (const pid of r.stdout.trim().split(/\s+/)) {
+              try {
+                process.kill(parseInt(pid, 10));
+              } catch {}
+            }
+          }
+        } catch {}
+      }
+    }
   } catch {}
 }
 function _origKillPid(pid) {
@@ -8749,7 +8838,7 @@ function _origAnchorCmd(dir, subcmd, extraArgs) {
   const r = _origSpawnSync(py, args, {
     cwd: dir,
     encoding: "utf8",
-    timeout: 15000,
+    timeout: _getOriginAnchorTimeout(),
     env: { ...process.env, PYTHONIOENCODING: "utf-8" },
   });
   if (r.error) throw r.error;
@@ -8762,7 +8851,8 @@ function _origAnchorCmd(dir, subcmd, extraArgs) {
 }
 // v17.23 · 三锚全部 try/catch · 任一失败不阻塞其余 · 返回成功计数
 async function _origAnchorAll(dir, port) {
-  const url = `http://127.0.0.1:${port}`;
+  const host = _getOriginBindHost();
+  const url = `http://${host}:${port}`;
   const inferUrl = `${url}/i`;
   let ok = 0;
   try {
