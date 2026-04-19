@@ -1,10 +1,9 @@
-# 道法自然 — 专注切号助手本源, 隔离一切非核心资源于本地
+# Windsurf Assistant · 道法自然 · 扁平根 · 仅留本源
 
-# ═══ 核心资源隔离 (仅保留本地, 不入库) ═══
+# ═══ 本地研发目录 (非 VSIX 所需 · 不入库) ═══
 cloud-pool/
 diagnostics/
 engine/
-media/
 monitor/
 pipeline/
 pool-admin/
@@ -12,8 +11,9 @@ research/
 scripts/
 tools/
 dist/
+wam-bundle/
 
-# ═══ 账号池数据 — 绝不入库 ═══
+# ═══ 账号池数据 · 绝不入库 ═══
 *.auth_blob
 accounts.json
 keypool.json
@@ -39,9 +39,13 @@ node_modules/
 *.bak
 __pycache__/
 
-# ═══ 本地映射 ═══
+# ═══ 本地映射 · vsce 元数据 ═══
 LOCAL_MAPPING.md
 .vsixmanifest
 
-# ═══ 允许 wam-bundle 内图标 ═══
-!wam-bundle/media/
+# ═══ 但 VSIX 必需资源要入库 ═══
+!extension.js
+!bundled-origin/
+!bundled-origin/**
+!media/
+!media/**

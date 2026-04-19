@@ -1,49 +1,121 @@
-# 无感切号 · 账号管理
+# Windsurf Assistant · 道Agent + 无感切号
 
-> 一个 Windsurf 插件。你写代码时额度耗尽，它悄悄切到下一个可用账号，你继续写，毫无中断。
+> 一个 Windsurf 插件, 二核合一:
+>
+> - **道Agent** — 为核. 一键把 Cascade 的 system prompt 换为道德经, 绝 rules/skills/workflows/memories 侧信道注入.
+> - **无感切号** — 为器. 百号轮转, 额度耗尽自切, 下一条消息就是新号.
 
----
-
-## 我只想继续写代码
-
-我手上有 100+ 个 Windsurf 账号，每个号的日额度、周额度、试用期、可用性都不一样。
-
-我不想盯着这些，也不想被"额度用完"打断思路。
-
-**我只想写代码。**
+两者相观而善. 道法自然, 无为而无不为.
 
 ---
 
-## 装完即用 · 你看见什么
+## 一 · 道Agent (为核)
 
-插件装上后，Windsurf 侧边栏出现一个面板，从上到下：
+Cascade 官方系统提示里塞了什么?
+
+```xml
+<communication_style>…</communication_style>
+<tool_calling>…</tool_calling>
+<making_code_changes>…</making_code_changes>
+<user_rules>…<MEMORY[user_global]>…</MEMORY[user_global]></user_rules>
+<skills>…</skills>
+<workflows>…</workflows>
+<memories>…</memories>
+<ide_metadata>…</ide_metadata>
+```
+
+**道Agent 一键化除全部**, 只余道德经 81 章, 前缀 `You are Cascade. 你的唯一` 伪装权重 — 让模型把它当作身份而非可忽略的注入.
+
+```text
+点 ☯ 道Agent  →  每次 Cascade 发问前, SP 被纯净换成 TAO_HEADER + 道德经全文
+点 ○ 官方Agent →  透传官方原味 SP
+```
+
+**三路径齐断**:
+
+1. `plain utf-8` — 裸 UTF-8 SP
+2. `nested chat_message` — 嵌套 ChatMessage role=0 content
+3. `raw_sp` — RawGetChatMessage field 3
+
+**16 侧信道标记**: communication_style / tool_calling / making_code_changes / running_commands / user_rules / user_information / workspace_information / skills / workflows / memories / memory_system / MEMORY[ / ide_metadata / Bug fixing discipline / Long-horizon workflow / Planning cadence — 任一命中即整体置换.
+
+**热切 1-3ms**: 点按钮 → POST `/origin/mode` → proxy 原地切模式 · 进程复用 · 无需 Reload Window.
+
+**bundled 自足**: VSIX 内嵌 `bundled-origin/` (源.js + 锚.py + 道德经 + VERSION). 首次点 ☯ 道Agent 自解压到 `~/.wam-hot/origin/`, 任何电脑装即用.
+
+---
+
+## 二 · 无感切号 (为器)
+
+我手上有 100+ 个 Windsurf 账号. 每个的日额度/周额度/试用期/可用性都不一样. 不想盯着这些.
+
+侧栏面板, 从上到下:
 
 - **日额度总计** · **周额度总计** — 整池水位一眼清
-- **可用 / 耗尽 / 等重置 / 切 / 号** — 五个数字说清全部号的状态
-- **活跃号** — 现在用谁，邮箱，类型 (Trial/Pro)，剩余天数，日用 / 周用 百分比
-- **消息锚定切号** — 额度一波动就切，下条消息就是新号
-- **模式切换** — 一个按钮 `WAM 切号` / `官方登录`，自由切换
-
-就这些。不用配置，不用思考。
+- **可用 / 耗尽 / 等重置 / 切 / 号** — 五数说清全部状态
+- **活跃号** — 现在谁, 邮箱, 类型 (Trial/Pro), 剩余天, 日用/周用 %
+- **消息锚定切号** — 额度波动立切, 下条消息就是新号
 
 ---
 
-## 装
+## 三 · 一行四键 (v17.21)
 
-1. 从 [Releases](https://github.com/zhouyoukang/windsurf-assistant/releases) 下载最新的 `.vsix`
-2. Windsurf 里 `Ctrl+Shift+P` → `Extensions: Install from VSIX...` → 选那个文件
-3. 重启 Windsurf · 侧边栏出现「无感切号 · 账号管理」面板
+侧栏只暴露一组按钮, 账号轴 `|` Agent 轴:
 
-就这样。插件会自动更新到最新版本，不用管。
+```text
+模式: [⚡ WAM切号] [🔑 官方登录] | [☯ 道Agent] [○ 官方Agent]
+```
+
+- 左二 = **账号层**: WAM 自动轮转 / 官方原生登录
+- 右二 = **Agent 层**: 道德经 SP 注入 / 官方原味 Agent
+
+四象独立可组合. 例: WAM 切号 + 道Agent / 官方登录 + 官方Agent / 互换.
 
 ---
 
-## 许可
+## 四 · 装
+
+1. 从 [Releases](https://github.com/zhouyoukang/windsurf-assistant/releases) 下载最新 `.vsix`
+2. Windsurf 里 `Ctrl+Shift+P` → `Extensions: Install from VSIX...` → 选
+3. Reload Window · 侧栏出现 **Windsurf Assistant** 面板
+
+就这. 自动检查更新 (可关).
+
+---
+
+## 五 · 架构 (一看便知)
+
+```text
+┌──────────────────────────────────────────┐
+│ Windsurf Cascade  (client, 无改动)        │
+└─────────────┬────────────────────────────┘
+              │  anchors: inference → 127.0.0.1:8889
+              ▼
+┌──────────────────────────────────────────┐
+│ 道Agent proxy (~/.wam-hot/origin/源.js)   │
+│  - 三路径 SP 侦测                         │
+│  - invert: 替为道德经                     │
+│  - passthrough: 零改写                    │
+│  - /origin/mode POST 热切                 │
+└─────────────┬────────────────────────────┘
+              │  透传到官方
+              ▼
+        inference.codeium.com
+```
+
+- **锚.py** — DPAPI/SQLite 三重锚, 把 Cascade 的 inference endpoint 改写为本机 proxy
+- **源.js** — 纯 Node · 无依赖 · 仅解析 Connect-RPC 协议里的 `ChatMessage` 并置换 SP
+
+---
+
+## 六 · 许可
 
 MIT.
 
 ---
 
-> 上善若水，水善利万物而不争。
+> 道冲, 而用之或不盈. 渊兮, 似万物之宗.
 >
-> 此之谓无感。
+> 挫其锐, 解其纷, 和其光, 同其尘.
+>
+> 湛兮, 似或存.

@@ -1,34 +1,10 @@
-// WAM v17.1 — 道法自然·零硬编码·动态配置: 47个常量全部getter化·跨平台自适应·一切可覆盖
+// WAM · 无感切号 · 道法自然
 // 载营魄抱一，能无离乎？专气致柔，能如婴儿乎？
-// 五感原则: 切号绝不调用windsurf.logout, 绝不重启extension host, 绝不写state.vscdb
-// v15.0: Webview fetch()走Chromium渲染进程 — 与Windsurf官方登录完全同一网络路径
-// v15.1: Bridge生命周期管理 — startup自动创建·sidebar retainContext·网络变化感知·proxy缓存联动
-// v15.2: 道可道非常道 — _httpsPost/_httpsPostRaw自动感知系统代理·LAN网关自动发现
-// v16.0: 万法归宗 — 统一代理描述符·消灭双全局状态
-// v17.0: 道法自然 — 28个硬编码常量getter化·_cfg()修复·跨平台自适应
-// v17.1: 去芜留菁 — 剩余19个常量(proxy/pool/quota/purge/cooldown)全部getter化·47常量零残留
-// v17.2: 道法自然彻底 — FIREBASE_HOST getter化·scanPorts/gatewayPorts/planStatusUrls支持完全替换·零死角
-// v17.3: 反者道之动 — 破 verify-gate 秒归档死刑 (连续3次失败才归档) · save 错误见光 (双通道失败必告警) · 新增 wam.diagWrite 写盘根因诊断
-//   道家哲理: 旧版"添加即验证·验证即死刑"违反"无为而无不为", 让网络抖动/密码暂时错的账号永久殉葬
-//             今改为: INVALID 3次缓冲 + save() 错误必见光 + 主动诊断命令 = 内存与磁盘不再背离
-// v17.4: 太上不知有之 — 输入净化预防性植入 + 诊断指纹日志
-//   背景: 磁盘hex审计证实本次6号failure无全角污染(纯ASCII完整命中), 故净化并非当下根因
-//   保留原因: 对未来聊天软件/中文IME污染(*＊&＆$＄%％^＾@＠→全角) 自动免疫; 纯ASCII零开销快路径
-//   新增: verify-gate 失败日志带密码 hex 指纹(前后12字节), 下次再遇 INVALID_LOGIN_CREDENTIALS 可精确溯源
-// v17.5: 相观而行 — Devin 身份迁移适配 · 道法自然 (Level 1 + Level 2)
-//   根因: Cognition 收购 Windsurf 后身份迁至 Devin (/_devin-auth/password/login), 新账号只在 Devin 不在 Firebase
-//         浏览器手动登录走 Devin 成功, WAM 走 Firebase INVALID_LOGIN_CREDENTIALS 必败 → 6号被永久拉黑
-//   Level 1 (保护): _devinLogin 三通道登录 · verify-gate+pool-tick 拉黑前做 Devin 探测 · Devin-only 账号 _authSystem='devin' 标记受保护
-//                   新增 wam.clearBlacklist 一键复活命令: 清内存黑名单 + 批量 Devin 探测 + 重置 Firebase 计数
-//   Level 2 (完整切号链路):
-//     端点: /_backend/exa.seat_management_pb.SeatManagementService/WindsurfPostAuth
-//     流程: password → auth1_token (devinLogin) → sessionToken (devinPostAuth) → injectAuth(sessionToken)
-//     关键: Windsurf IDE 原生接受 3 种 token 前缀: sk-ws-01- / devin-session-token$ / cog_
-//           Devin sessionToken 格式为 "devin-session-token$<JWT>", 可直接走现有 windsurf.provideAuthTokenToAuthProvider 注入
-//     switchToAccount 新增 Devin 分支: _authSystem==='devin' → 走完整 Devin 链路 (跳过 Firebase)
-//                                      Firebase INVALID → 即时 Devin fallback, 成功则标记 + 注入
-//     新增 wam.testDevinSwitch: 诊断命令, 对任一账号验证 login+PostAuth 链路, 不真正注入
-// 锚定本源: Chromium原生桥 > 系统代理感知 > 直连 > 动态端口发现(末路兜底)
+// ─ 五感原则 ─ 切号绝不调用 windsurf.logout · 绝不重启 extension host · 绝不写 state.vscdb
+// ─ 锚本源 ─ Chromium 原生桥 > 系统代理感知 > 直连 > 动态端口 (末路兜底)
+// ─ 双身份 ─ Firebase (主) · Devin (/_devin-auth/ · 新号) 自动探测切换
+// ─ v17.20 ─ 本源内嵌自解压: bundled-origin/ 封入 VSIX, 首启解压到 ~/.wam-hot/origin, 任何电脑装即用
+// 详细迭代历史见 git log (v15~v17.20 凡 50+ 代 · 为学日益已化为 git 考古, 源码去芜留菁)
 const vscode = require("vscode");
 const crypto = require("crypto");
 const https = require("https");
@@ -322,7 +298,7 @@ function _getFirebaseHost() {
   return _cfg("firebase.host", "identitytoolkit.googleapis.com");
 }
 
-// v16.0: 万法归宗 — 消灭一切固定端口/固定地址常量
+// 万法归宗 — 消灭一切固定端口/固定地址常量
 // 代理发现优先级: 系统代理(env/vscode/registry) > LAN网关 > localhost动态扫描
 // 端口扫描仅为末路兜底 — 真正的proxy由 _getSystemProxy() 动态获取
 const _DEFAULT_SCAN_PORTS = [
@@ -361,7 +337,7 @@ function _getGatewayPorts() {
   return base;
 }
 
-// v14.0: 官方API端点 — 直连Windsurf/Codeium, 不经中继, 根治relay单点故障
+// 官方API端点 — 直连Windsurf/Codeium, 不经中继, 根治relay单点故障
 // 可通过 wam.officialEndpoints 追加自定义端点
 const _DEFAULT_PLAN_STATUS_URLS = [
   "https://server.codeium.com/exa.seat_management_pb.SeatManagementService/GetPlanStatus",
@@ -384,7 +360,7 @@ function _getOfficialPlanStatusUrls() {
   return _DEFAULT_PLAN_STATUS_URLS;
 }
 
-// v14.0: 注入命令候选 — 版本自适应, 按优先级尝试
+// 注入命令候选 — 版本自适应, 按优先级尝试
 // 可通过 wam.injectCommands 覆盖整个列表
 const _DEFAULT_INJECT_COMMANDS = [
   "windsurf.provideAuthTokenToAuthProvider",
@@ -421,7 +397,7 @@ const RELOAD_SIGNAL = path.join(WAM_DIR, "_reload_signal");
 const RELOAD_READY = path.join(WAM_DIR, "_reload_ready");
 // TRIAL_MAX_DAYS已移除 — 官方Trial是14天(非90天), 且过期后仍有配额, 不再用时间猜测过期
 // PURGE_INTERVAL_MS → _getPurgeIntervalMs() (v17.1 getter化)
-const WAM_VERSION = "17.18.0"; // 集中版本号 — 道法自然·一处定义 | v17.18.0: 主仓归宗·默认源改指 windsurf-assistant 公开主仓·sanitize SMB 示例去隐私·多网络/多用户场景 E2E 验证全绿·太极生万物
+const WAM_VERSION = "17.21.0"; // 集中版本号 — 道法自然·一处定义 | v17.21.0: 四键一行·热切 invert↔passthrough·纯 HTTP 无 Reload·OriginCtl.ensure 分冷热·太上不知有之·唯变所适
 
 let _store = null;
 let _sidebarProvider = null;
@@ -443,6 +419,16 @@ let _purgeRunning = false;
 let _lastPurgeTime = 0;
 let _mode = "wam"; // 'wam' = 切号模式 | 'official' = 官方登录模式
 const MODE_FILE = path.join(WAM_DIR, "wam_mode.json");
+
+// v17.19 · 本源 Origin 状态 (与 _mode 正交, 账号层 vs SP 注入层)
+// 'off' = 未启反代 | 'invert' = 道德经注入 | 'passthrough' = 零改写直通
+let _origin = "off";
+let _originPort = 0;
+let _originPid = 0;
+const ORIGIN_STATE_FILE = path.join(WAM_DIR, "origin_state.json");
+const ORIGIN_CACHE_FILE = path.join(WAM_DIR, "origin_discovery.json");
+const ORIGIN_LOG_FILE = path.join(WAM_DIR, "origin_proxy.log");
+const ORIGIN_ERR_FILE = path.join(WAM_DIR, "origin_proxy.err");
 
 // ── 性能参数 · v17.11 太上不知有之: 自适应主导, _cfg override 作为 ops 应急兜底 ──
 // 用户零感知: package.json 不曝光, _adaptive 自动从 RTT/错率推算
@@ -623,7 +609,7 @@ function _getAutoUpdateEnabled() {
   return _cfg("autoUpdate.enabled", true); // 默认启用 · v17.17 后无配置亦能走公网
 }
 function _getAutoUpdateAutoDiscover() {
-  // v17.17: source 未设时 · 是否自动使用 jsDelivr 默认源 + 多镜像 fallback
+  // source 未设时 · 是否自动使用 jsDelivr 默认源 + 多镜像 fallback
   return _cfg("autoUpdate.autoDiscover", true);
 }
 // v17.18 主仓归宗: 默认源指向公开主仓 windsurf-assistant/wam-bundle/ · 零隐私·对外正式发布地址
@@ -919,7 +905,7 @@ function isAccountSwitchable(health) {
   // v17.8 道法自然: 删除 plan==='devin' 假豁免 — Devin 账号与普通账号同轨走真实 D/W 判断
   //   Devin fallback 成功 (sessionToken 拿到真实 plan) → 按 D/W 自然评估
   //   Devin fallback 失败 → daily/weekly=0 → 不可切 (真实反映, 不再虚构永续)
-  // v9.3: weeklyUnknown时只用daily判断, 不因W未知而误拒
+  // weeklyUnknown时只用daily判断, 不因W未知而误拒
   const effectiveW = health.weeklyUnknown ? health.daily : health.weekly;
   const eff = Math.min(health.daily, effectiveW);
   if (eff > _getAutoSwitchThreshold()) return true;
@@ -970,7 +956,7 @@ function isWamMode() {
 }
 
 // ── 官方模式: 彻底隔离第三方套层, 回归本源 ──
-// v7.4: 万法归宗 — 真正的零干扰隔离
+// 万法归宗 — 真正的零干扰隔离
 //   1. windsurf.logout 登出WAM注入的会话
 //   2. 停止所有引擎+心跳+文件监听
 //   3. 清除activeIndex/instance claim
@@ -1000,7 +986,7 @@ async function cleanupThirdPartyState() {
       log(`cleanup: failed ${path.basename(f)}: ${e.message}`);
     }
   }
-  // v7.4: 登出WAM注入的会话 — 回归本源, 让用户用自己的账号
+  // 登出WAM注入的会话 — 回归本源, 让用户用自己的账号
   try {
     log("cleanup: windsurf.logout — 登出WAM会话");
     await Promise.race([
@@ -1018,19 +1004,19 @@ async function cleanupThirdPartyState() {
     clearInterval(_pollTimer);
     _pollTimer = null;
   }
-  // v7.4: 停止心跳定时器
+  // 停止心跳定时器
   if (_heartbeatTimer) {
     clearInterval(_heartbeatTimer);
     _heartbeatTimer = null;
     log("cleanup: heartbeat stopped");
   }
-  // v7.4: 停止文件监听
+  // 停止文件监听
   if (_watcher) {
     _watcher.close();
     _watcher = null;
     log("cleanup: watcher stopped");
   }
-  // v7.4: 清除activeIndex + instance claim
+  // 清除activeIndex + instance claim
   if (_store) {
     _store.activeIndex = -1;
     log("cleanup: activeIndex cleared");
@@ -1067,7 +1053,7 @@ async function cleanupThirdPartyState() {
   _consecutiveChanges = 0;
   _predictiveCandidate = -1;
   _prewarmedToken = null; // v8: 清除预热Token
-  // v15.2: 清除旧版本可能设置的代理环境变量污染 — 唯变所适
+  // 清除旧版本可能设置的代理环境变量污染 — 唯变所适
   // 不再硬编码单一地址, 而是检测所有WAM可能设过的localhost代理值
   for (const envKey of ["HTTP_PROXY", "HTTPS_PROXY"]) {
     const val = process.env[envKey];
@@ -1083,7 +1069,7 @@ async function cleanupThirdPartyState() {
   return cleaned;
 }
 
-// v7.4: 回切WAM时重启所有后台服务 (watcher + heartbeat)
+// 回切WAM时重启所有后台服务 (watcher + heartbeat)
 function _restartBackgroundServices() {
   if (!_watcher) startFileWatcher();
   if (!_heartbeatTimer) {
@@ -1183,7 +1169,7 @@ class AccountStore {
               }
               // 试用过期门控: 仅当D=0且W=0时才阻止(planEnd过期但有配额仍可用)
               const cachedPlanEnd = (a.usage && a.usage.planEnd) || 0;
-              // v7.2: 兼容两种格式 — number(82) 或 object({remaining:82})
+              // 兼容两种格式 — number(82) 或 object({remaining:82})
               const _rd = (f) =>
                 f == null
                   ? -1
@@ -1204,7 +1190,7 @@ class AccountStore {
                 blocked++;
                 continue;
               }
-              // v7.2: 格式迁移 — 统一 usage.daily/weekly 为 {remaining: N} 对象格式
+              // 格式迁移 — 统一 usage.daily/weekly 为 {remaining: N} 对象格式
               if (a.usage && typeof a.usage.daily === "number") {
                 a.usage.daily = { remaining: a.usage.daily };
                 a._migrated = true;
@@ -1228,7 +1214,7 @@ class AccountStore {
     log(
       `store: loaded ${this.accounts.length} accounts (${this.pwCount()} with pw) from ${sources} sources${blocked > 0 ? ` (${blocked} blacklisted)` : ""}`,
     );
-    // v7.2.1: 格式迁移后立即持久化，避免file watcher反复读旧格式
+    // 格式迁移后立即持久化，避免file watcher反复读旧格式
     if (this.accounts.some((a) => a.usage && a._migrated)) {
       this.accounts.forEach((a) => {
         if (a._migrated) delete a._migrated;
@@ -1269,7 +1255,7 @@ class AccountStore {
   }
 
   save() {
-    // v16.1: 保存前合并磁盘数据 — 保留pipeline注入的apiKey和新增账号
+    // 保存前合并磁盘数据 — 保留pipeline注入的apiKey和新增账号
     this._mergeFromDisk();
     const json = JSON.stringify(this.accounts, null, 2);
     // 自动备份: 保存前先备份现有文件 (保留最近3个备份)
@@ -1296,7 +1282,7 @@ class AccountStore {
         `store save error [shared=${this._sharedPath}]: ${e.code || ""} ${e.message}`,
       );
     }
-    // v17.3: 双通道同时失败才告警 (避免噪音), 且每 5 分钟最多 1 次
+    // 双通道同时失败才告警 (避免噪音), 且每 5 分钟最多 1 次
     if (primaryErr && sharedErr) {
       const now = Date.now();
       if (
@@ -1725,7 +1711,7 @@ class AccountStore {
       ) ||
       !!snap ||
       _devinChecked;
-    // v7.2: 兼容两种格式 — usage.daily 可能是数字(82)或对象({remaining:82})
+    // 兼容两种格式 — usage.daily 可能是数字(82)或对象({remaining:82})
     const _readQuota = (field) => {
       if (field == null) return undefined;
       if (typeof field === "number") return field; // 数字格式: 82
@@ -1738,7 +1724,7 @@ class AccountStore {
     const storedD = rawD != null ? rawD : checked ? 0 : -1;
     const storedW = rawW != null ? rawW : checked ? 0 : -1;
     // 反者道之动: 快照是实时真相, acc.usage是历史兜底
-    // v10.2: weekly始终0-100(absent=0), snap.weekly<0仅极端防御
+    // weekly始终0-100(absent=0), snap.weekly<0仅极端防御
     const dr = snap ? Math.max(0, Math.min(100, snap.daily)) : storedD;
     let wr;
     let weeklyUnknown = false;
@@ -1746,7 +1732,7 @@ class AccountStore {
       if (snap.weekly >= 0) {
         wr = Math.max(0, Math.min(100, snap.weekly));
       } else {
-        // v10.2: weekly未知时回退到存储值, 兜底=0(耗尽), 绝不镜像daily
+        // weekly未知时回退到存储值, 兜底=0(耗尽), 绝不镜像daily
         weeklyUnknown = true;
         wr = storedW >= 0 ? storedW : 0;
       }
@@ -1819,7 +1805,7 @@ class AccountStore {
         exhausted++;
       else waiting++;
     }
-    // v7.2: 优先用活跃账号的API重置时间, 仅在无API数据时用计算值兜底
+    // 优先用活跃账号的API重置时间, 仅在无API数据时用计算值兜底
     const now = Date.now();
     const activeAcc =
       this.activeIndex >= 0 ? this.accounts[this.activeIndex] : null;
@@ -1927,7 +1913,7 @@ class AccountStore {
       if (a.skipAutoSwitch) continue; // 用户手动锁定 → 自动切号不选此号
       if (skipInUse && this.isInUse(a.email)) continue;
       if (_isClaimedByOther(a.email)) continue; // 跨实例协调: 跳过被其他存活实例占用的账号
-      // v14.1: pool永久黑名单/临时拉黑 → 跳过 (根治all_channels_failed)
+      // pool永久黑名单/临时拉黑 → 跳过 (根治all_channels_failed)
       const ek = a.email.toLowerCase();
       if (_tokenPoolBlacklist.has(ek)) continue;
       const streak = _poolFailStreak.get(ek);
@@ -1941,7 +1927,7 @@ class AccountStore {
       // Claude不可用(Free/试用过期) → 跳过
       if (!isClaudeAvailable(h)) continue;
 
-      // v14.1: token缓存加分 — 有弹药的号优先, 根治live-login失败
+      // token缓存加分 — 有弹药的号优先, 根治live-login失败
       const cached = _tokenCache.get(ek);
       const hasWarmToken = cached && cached.expiresAt > Date.now() + 60000; // 至少1min有效
       const tokenBonus = hasWarmToken ? 500 : 0;
@@ -1952,7 +1938,7 @@ class AccountStore {
       //   Devin 账号数据来源: fetchAccountQuota Firebase→Devin fallback 补齐真实 plan/quota
       //   Fallback 失败 → D/W=0 → 自然 continue · 不参与自动切号 (手动切号独立走 _devinFullSwitch 通道)
 
-      // v9.3: weeklyUnknown时走干旱模式逻辑(只看daily)
+      // weeklyUnknown时走干旱模式逻辑(只看daily)
       if (drought || h.weeklyUnknown) {
         // ── 干旱/W未知模式: 只看Daily ──
         if (h.daily <= 0 && hrsToDaily > 4) continue;
@@ -2031,7 +2017,7 @@ function _readInstanceClaims() {
   }
 }
 
-// v14.3.1: claims缓存 — getBestIndex每个账号都调用_isClaimedByOther, 50号=50次readFileSync
+// claims缓存 — getBestIndex每个账号都调用_isClaimedByOther, 50号=50次readFileSync
 // 缓存5秒TTL, 将N次磁盘读降为1次
 let _claimsCache = { data: null, ts: 0 };
 
@@ -2082,7 +2068,7 @@ function _cleanDeadInstances() {
 // 当系统配置了代理(env/vscode/registry)时, 自动通过代理发送
 // 否则直连 (适合可直通Google Cloud的网络)
 function _httpsPost(url, body, opts = {}) {
-  // v15.2: 如果系统有代理且caller没明确指定hostname → 自动走代理
+  // 如果系统有代理且caller没明确指定hostname → 自动走代理
   if (!opts.hostname && !opts._skipAutoProxy) {
     const sysProxy = _getSystemProxy();
     if (sysProxy) {
@@ -2259,7 +2245,7 @@ function _verifyProxyPort(host, port) {
   });
 }
 
-// v14.0: 系统代理自适应 — 读取环境变量/VS Code配置, 不硬编码任何主机名/IP
+// 系统代理自适应 — 读取环境变量/VS Code配置, 不硬编码任何主机名/IP
 function _getSystemProxy() {
   // 优先级: HTTPS_PROXY > HTTP_PROXY > ALL_PROXY > VS Code http.proxy
   const envVars = [
@@ -2300,7 +2286,7 @@ function _getSystemProxy() {
       }
     }
   } catch {}
-  // v14.3.2: Windows registry proxy detection — 读取系统代理设置 (v2rayN/Clash/SSR等设置系统代理时写入此处)
+  // Windows registry proxy detection — 读取系统代理设置 (v2rayN/Clash/SSR等设置系统代理时写入此处)
   if (process.platform === "win32") {
     try {
       const { execSync } = require("child_process");
@@ -2335,7 +2321,7 @@ function _getSystemProxy() {
   return null;
 }
 
-// v15.2: 动态发现默认网关 — 唯变所适·道法自然
+// 动态发现默认网关 — 唯变所适·道法自然
 // 企业/VPN/家庭环境中, 代理可能运行在网关而非localhost
 function _detectDefaultGateway() {
   try {
@@ -2367,7 +2353,7 @@ function _detectDefaultGateway() {
   return null;
 }
 
-// v16.0: _detectProxy() 返回统一描述符 — 万法归宗·从根本去除端口依赖
+// _detectProxy() 返回统一描述符 — 万法归宗·从根本去除端口依赖
 // 旧版: 返回 Promise<number> (端口号, 0=无代理) + 隐式_proxyHostCache全局
 // 新版: 返回 Promise<{host,port,source}|null> — 自洽, 无隐式状态, 调用方解构即用
 function _detectProxy() {
@@ -2384,11 +2370,11 @@ function _detectProxy() {
     now - _proxyCacheTs < _getProxyFailTtl()
   )
     return Promise.resolve(null);
-  // v16.1: 共享Promise — 并发调用方等待同一次检测结果, 不再返回null丢失代理
+  // 共享Promise — 并发调用方等待同一次检测结果, 不再返回null丢失代理
   if (_proxyDetectPromise) return _proxyDetectPromise;
 
   _proxyDetectPromise = new Promise(async (resolve) => {
-    // v16.0: 构建候选列表 — 锚定本源·动态发现·零固定常量
+    // 构建候选列表 — 锚定本源·动态发现·零固定常量
     // 优先级: 系统代理(env/vscode/registry) → localhost动态扫描 → LAN网关扫描
     const candidates = [];
     const seen = new Set(); // 去重 host:port
@@ -2558,12 +2544,12 @@ function _getActiveWebview() {
 //   3. Chromium DNS解析 (绕过Node.js DNS劫持)
 //   4. 与Windsurf官方登录完全相同的网络路径
 // 只要用户能用Windsurf → 此通道必然能到达Firebase/Codeium
-// v15.1: no_webview时自动尝试_ensureBridgeWebview, 而非直接放弃
+// no_webview时自动尝试_ensureBridgeWebview, 而非直接放弃
 function _nativeFetch(url, opts = {}) {
   return new Promise((resolve, reject) => {
     let wv = _getActiveWebview();
     if (!wv) {
-      // v15.1: 自动确保bridge — 不再静默放弃
+      // 自动确保bridge — 不再静默放弃
       _ensureBridgeWebview();
       wv = _getActiveWebview();
     }
@@ -2609,9 +2595,9 @@ function _handleFetchResult(msg) {
 }
 
 // ── Raw HTTPS POST (返回Buffer, 用于protobuf二进制响应) — v15.2: 自动感知系统代理 ──
-// v17.11: 入口采样 RTT/outcome → _adaptive 自动调节所有性能参数
+// 入口采样 RTT/outcome → _adaptive 自动调节所有性能参数
 function _httpsPostRaw(url, body, opts = {}) {
-  // v15.2: 系统有代理且caller没指定hostname → 自动走代理 (道法自然)
+  // 系统有代理且caller没指定hostname → 自动走代理 (道法自然)
   if (!opts.hostname && !opts._skipAutoProxy) {
     const sysProxy = _getSystemProxy();
     if (sysProxy) {
@@ -3432,11 +3418,11 @@ async function getCachedToken(email, password) {
 }
 
 // ── 获取账号实时额度 (Firebase登录→Relay→PlanStatus) ──
-// v7.2: 速率限制 — 每账号最少间隔10秒，429后退避60秒
+// 速率限制 — 每账号最少间隔10秒，429后退避60秒
 const _quotaFetchCooldown = new Map(); // email → {nextAllowedTs}
 // QUOTA_MIN_INTERVAL / QUOTA_429_BACKOFF → _getQuotaMinInterval() / _getQuota429Backoff() (v17.1 getter化)
 
-// v7.2: DoH解析relay真实IP (绕过Clash fake-ip DNS返回127.0.0.1的问题)
+// DoH解析relay真实IP (绕过Clash fake-ip DNS返回127.0.0.1的问题)
 let _relayIPCache = { ip: null, ts: 0 };
 // RELAY_IP_TTL → _getRelayIpTtl() (v17.1 getter化)
 
@@ -3486,7 +3472,7 @@ async function _resolveRelayIP() {
                 clearTimeout(timer);
                 try {
                   const j = JSON.parse(d);
-                  // v9.3: 过滤A记录(type=1), 跳过CNAME(type=5)等
+                  // 过滤A记录(type=1), 跳过CNAME(type=5)等
                   if (j.Answer && Array.isArray(j.Answer)) {
                     const aRecords = j.Answer.filter(
                       (r) =>
@@ -3514,7 +3500,7 @@ async function _resolveRelayIP() {
         });
         connReq.end();
       });
-      // v9.3: 正确处理CNAME链+多A记录 — 筛选真正的IPv4 A记录
+      // 正确处理CNAME链+多A记录 — 筛选真正的IPv4 A记录
       const resolvedIP = (() => {
         if (!dohResult) return null;
         // 如果直接返回的就是IP, 用它
@@ -3534,7 +3520,7 @@ async function _resolveRelayIP() {
   } catch (e) {
     log(`DoH resolve err: ${e.message}`);
   }
-  // v14.0: Cloudflare DoH备用 (1.1.1.1 — 不依赖代理, 直连)
+  // Cloudflare DoH备用 (1.1.1.1 — 不依赖代理, 直连)
   try {
     const cfResult = await new Promise((cfResolve, cfReject) => {
       const timer = setTimeout(
@@ -3736,7 +3722,7 @@ async function fetchAccountQuota(email, password) {
   ];
 
   log(`quota: ${channels.length}ch for ${email.substring(0, 15)}`);
-  // v13.4: 并行竞速 — 天下之至柔驰骋天下之至坚, 先到者胜
+  // 并行竞速 — 天下之至柔驰骋天下之至坚, 先到者胜
   const racePromises = channels.map((chFn, i) => {
     const chName = `ch${i + 1}`;
     return chFn()
@@ -3800,11 +3786,11 @@ function _updateAccountUsage(email, quota) {
   const calcDailyReset = getNextDailyResetMs();
   const calcWeeklyReset = getNextWeeklyResetMs();
 
-  // v7.2: 始终信任API重置时间, 仅在API无值时用计算值兜底
+  // 始终信任API重置时间, 仅在API无值时用计算值兜底
   const effectiveWeeklyReset =
     apiWeeklyReset || calcWeeklyReset || prev.weeklyReset || 0;
 
-  // v10.2: weekly现在始终为0-100(proto3 absent=0), 不再有-1. 兜底保留旧值仅防极端情况
+  // weekly现在始终为0-100(proto3 absent=0), 不再有-1. 兜底保留旧值仅防极端情况
   const effectiveWeekly =
     quota.weekly >= 0
       ? quota.weekly
@@ -3867,7 +3853,7 @@ async function injectAuth(idToken) {
   let gotCode0 = false;
 
   // ── Phase 1 (原 P1+P2 合并): 主命令 · 自适应单次等待 ──
-  // v17.13: 超时 = 8000ms 默认, 学习后 = p95×1.5 clamp[3000,15000]
+  // 超时 = 8000ms 默认, 学习后 = p95×1.5 clamp[3000,15000]
   //         P95 的网络慢场景自动放大, P50 的快场景超时也不会误触发
   log(`inject: p1 t=${adaptiveTimeout}ms [+${Date.now() - t0}ms]`);
   const cmdP = vscode.commands.executeCommand(cmd, idToken);
@@ -3902,7 +3888,7 @@ async function injectAuth(idToken) {
   }
 
   // ── Phase 2 (原 P3): 新命令重试 · 自适应延迟 + 自适应超时 ──
-  // v17.13: retryDelay = 200ms 默认 (原 1000ms), 学习后 = p95×0.1 clamp[100,2000]
+  // retryDelay = 200ms 默认 (原 1000ms), 学习后 = p95×0.1 clamp[100,2000]
   //         IDE 极短喘息即可, 无需死等
   const retryDelay = _injectAdaptive.getRetryDelayMs();
   await new Promise((r) => setTimeout(r, retryDelay));
@@ -4596,7 +4582,7 @@ async function switchToAccount(email, password) {
     const injectResult = await injectAuth(ds.sessionToken);
     const ms = Date.now() - t0;
     if (!injectResult.ok) {
-      // v17.14: inject 失败 → 失效 Devin 缓存 (可能 sessionToken 已过期)
+      // inject 失败 → 失效 Devin 缓存 (可能 sessionToken 已过期)
       _invalidateDevinCache(email);
       log(
         `switch FAIL inject (devin): ${JSON.stringify(injectResult.error)} [${ms}ms] · cache 已失效`,
@@ -4666,7 +4652,7 @@ async function switchToAccount(email, password) {
     if (!loginResult.ok) {
       const err = loginResult.error || "";
       log(`switch FAIL login: ${err} [${Date.now() - t0}ms]`);
-      // v14.1: 登录失败反馈到poolFailStreak → getBestIndex自动避开此号
+      // 登录失败反馈到poolFailStreak → getBestIndex自动避开此号
       if (/all_channels_failed/.test(err)) {
         const fs0 = _poolFailStreak.get(emailKey) || { count: 0, lastFail: 0 };
         fs0.count++;
@@ -4819,7 +4805,7 @@ async function switchToAccount(email, password) {
   const ms = Date.now() - t0;
   if (!injectResult.ok) {
     log(`switch FAIL inject: ${JSON.stringify(injectResult.error)} [${ms}ms]`);
-    // v14.2: 注入失败不清除token缓存 — token有效, 是auth provider忙
+    // 注入失败不清除token缓存 — token有效, 是auth provider忙
     // 仅当token确实过期(>50min)时自然淘汰, 避免无谓重新登录
     return {
       ok: false,
@@ -5006,7 +4992,7 @@ async function _tokenPoolTick() {
     totalWithPw++;
     const ek = acc.email.toLowerCase();
     if (_tokenPoolBlacklist.has(ek)) continue;
-    // v13.4: 连续网络失败临时拉黑 — 不争·水善利万物而不争
+    // 连续网络失败临时拉黑 — 不争·水善利万物而不争
     const streak = _poolFailStreak.get(ek);
     if (
       streak &&
@@ -5114,7 +5100,7 @@ async function _tokenPoolTick() {
         } else {
           // v13: 记录失败原因 (以前静默吞掉 → 池为什么不填无从诊断)
           if (/INVALID|NOT_FOUND|DISABLED|WRONG/.test(lr.error || "")) {
-            // v17.5: 拉黑前探测 Devin-only — 道法自然·不让 Devin 账号永久殉葬
+            // 拉黑前探测 Devin-only — 道法自然·不让 Devin 账号永久殉葬
             try {
               const dv = await _devinLogin(acc.email, acc.password);
               if (dv.ok) {
@@ -5133,7 +5119,7 @@ async function _tokenPoolTick() {
               `🔥 pool: blacklisted ${acc.email.substring(0, 20)} (${lr.error})`,
             );
           } else {
-            // v13.4: 连续网络失败计数 — 多言数穷不如守中
+            // 连续网络失败计数 — 多言数穷不如守中
             const fs0 = _poolFailStreak.get(ek) || { count: 0, lastFail: 0 };
             fs0.count++;
             fs0.lastFail = Date.now();
@@ -5156,7 +5142,7 @@ async function _tokenPoolTick() {
       }
     }),
   );
-  // v13.1: 每个tick结束后持久化缓存到磁盘
+  // 每个tick结束后持久化缓存到磁盘
   _saveTokenCache();
 }
 
@@ -5314,7 +5300,7 @@ async function _autoUpdateHttpGet(url, asBuffer = false, redirectCount = 0) {
   });
 }
 
-// v17.17: jsDelivr 镜像 fallback · 对 jsDelivr 域名源自动展开多个镜像顺次尝试·其他 source (SMB/非 jsDelivr HTTPS) 原样返回
+// jsDelivr 镜像 fallback · 对 jsDelivr 域名源自动展开多个镜像顺次尝试·其他 source (SMB/非 jsDelivr HTTPS) 原样返回
 async function _autoUpdateFetchTextHttp(source, filename) {
   const candidates = _expandJsdelivrSources(source);
   let lastErr;
@@ -5704,7 +5690,7 @@ function _stopEngines() {
 
 // 活跃账号实时监测 (快速循环, 每_getMonitorFastMs())
 async function monitorActiveQuota() {
-  // v9.3: 切号锁超时保护 — 防止switchToAccount挂起导致monitor永久暂停
+  // 切号锁超时保护 — 防止switchToAccount挂起导致monitor永久暂停
   if (
     _switching &&
     _switchingStartTime > 0 &&
@@ -5747,7 +5733,7 @@ async function monitorActiveQuota() {
     const emailKey = acc.email.toLowerCase();
     const prev = _quotaSnapshots.get(emailKey);
     const now = Date.now();
-    // v10.2: weekly现在始终0-100(absent=0), 兜底逻辑仅防极端情况
+    // weekly现在始终0-100(absent=0), 兜底逻辑仅防极端情况
     const snapWeekly =
       result.weekly >= 0 ? result.weekly : prev ? prev.weekly : 0;
     _quotaSnapshots.set(emailKey, {
@@ -5761,7 +5747,7 @@ async function monitorActiveQuota() {
     // ── 额度变化检测 v7.1 — 消息锚定: 任意波动→立即切号 ──
     if (prev) {
       const dDelta = prev.daily - result.daily;
-      // v9.3: weekly未知时不参与变化检测, 只看daily
+      // weekly未知时不参与变化检测, 只看daily
       const wDelta = result.weekly >= 0 ? prev.weekly - result.weekly : 0;
       const hasFluctuation =
         dDelta > _getChangeThreshold() || wDelta > _getChangeThreshold();
@@ -5788,8 +5774,8 @@ async function monitorActiveQuota() {
         });
 
         // ── 消息锚定核心: 波动=有人发消息→立即切到新账号, 确保下条消息用新号 ──
-        // v7.3: 自动切号冷却 — 上次切号15s内不再触发, 避免连续切号风暴
-        // v9.2: 活跃账号已锁定 → 不自动切走 (道法自然: 用户主动锁定优先于自动策略)
+        // 自动切号冷却 — 上次切号15s内不再触发, 避免连续切号风暴
+        // 活跃账号已锁定 → 不自动切走 (道法自然: 用户主动锁定优先于自动策略)
         const switchCooldown =
           Date.now() - _lastSwitchTime < _getSwitchCooldownMs();
         const injectCooldown =
@@ -5797,7 +5783,7 @@ async function monitorActiveQuota() {
         if (acc.skipAutoSwitch) {
           log(`📌 活跃账号已锁定·跳过自动切号: ${acc.email.substring(0, 20)}`);
         } else if (injectCooldown && !_switching) {
-          // v13.4: 注入失败冷却中 — 孤能浊以静之徐清
+          // 注入失败冷却中 — 孤能浊以静之徐清
         } else if (autoRotate && !_switching && !switchCooldown) {
           let bestI = _predictiveCandidate >= 0 ? _predictiveCandidate : -1;
           if (bestI >= 0) {
@@ -5819,7 +5805,7 @@ async function monitorActiveQuota() {
             _switching = true;
             _switchingStartTime = Date.now();
             try {
-              // v14.1: 自动重试 — 登录失败后尝试下一个号(最多3次)
+              // 自动重试 — 登录失败后尝试下一个号(最多3次)
               let switchOk = false;
               for (let _retry = 0; _retry < 3 && !switchOk; _retry++) {
                 if (_retry > 0) {
@@ -5866,7 +5852,7 @@ async function monitorActiveQuota() {
                   );
                   continue; // v14.1: 登录失败→重试下一个号
                 } else {
-                  // v14.3: 注入失败重试一次(3s后), p3已内含5s等待·外层无需长等
+                  // 注入失败重试一次(3s后), p3已内含5s等待·外层无需长等
                   // v17.9 软编码: 重试延迟可通过 wam.switchRetryDelayMs 覆盖
                   if (_retry < 2) {
                     const _delay = _getSwitchRetryDelayMs();
@@ -5897,7 +5883,7 @@ async function monitorActiveQuota() {
       }
 
       // ── 预判候选: 额度<25%时提前预选, 波动时零延迟切入 ──
-      // v10.2: snapWeekly已兑底(absent=0), 始终安全
+      // snapWeekly已兑底(absent=0), 始终安全
       const effQuota = drought
         ? result.daily
         : Math.min(result.daily, snapWeekly);
@@ -5917,7 +5903,7 @@ async function monitorActiveQuota() {
       if (effQuota >= _getPredictiveThreshold()) _predictiveCandidate = -1;
 
       // ── 耗尽保护: 额度极低时强制切号 (即使无波动, 防止卡死) ──
-      // v10.2: snapWeekly始终安全
+      // snapWeekly始终安全
       const isExhausted = drought
         ? result.daily < _getAutoSwitchThreshold()
         : Math.min(result.daily, snapWeekly) < _getAutoSwitchThreshold();
@@ -5968,7 +5954,7 @@ async function monitorActiveQuota() {
             _switching = true;
             _switchingStartTime = Date.now();
             try {
-              // v14.1: 自动重试 — 登录失败后尝试下一个号(最多3次)
+              // 自动重试 — 登录失败后尝试下一个号(最多3次)
               let switchOk = false;
               for (let _retry = 0; _retry < 3 && !switchOk; _retry++) {
                 if (_retry > 0) {
@@ -6007,7 +5993,7 @@ async function monitorActiveQuota() {
                   );
                   continue;
                 } else {
-                  // v14.3: 注入失败重试一次(3s后)
+                  // 注入失败重试一次(3s后)
                   // v17.9 软编码: 重试延迟可通过 wam.switchRetryDelayMs 覆盖
                   if (_retry < 2) {
                     const _delay = _getSwitchRetryDelayMs();
@@ -6052,7 +6038,7 @@ async function monitorActiveQuota() {
 
 // 后台全量扫描 (慢速, 每轮扫描_getScanBatchSize()个账号)
 async function scanBackgroundQuota() {
-  // v9.3: 切号锁超时保护 (与monitor同步)
+  // 切号锁超时保护 (与monitor同步)
   if (
     _switching &&
     _switchingStartTime > 0 &&
@@ -6113,7 +6099,7 @@ async function scanBackgroundQuota() {
       try {
         const result = await fetchAccountQuota(acc.email, acc.password);
         if (!result || !result.ok) return { scanned: false, changed: false };
-        // v10.2: weekly 始终 0-100 (absent=0) · 兜底防极端
+        // weekly 始终 0-100 (absent=0) · 兜底防极端
         const scanSnapW =
           result.weekly >= 0
             ? result.weekly
@@ -6278,7 +6264,7 @@ async function scanMissingExpiry() {
 
 function updateStatusBar() {
   if (!_statusBarItem || !_store) return;
-  // v7.4: 官方模式下最小化显示 — 不泄露账号/额度/池子信息
+  // 官方模式下最小化显示 — 不泄露账号/额度/池子信息
   if (_mode === "official") {
     _statusBarItem.text = "$(key) 官方模式";
     _statusBarItem.tooltip = `WAM v${WAM_VERSION} [官方模式] — 所有切号功能已停止\n点击打开管理面板，可切回WAM模式`;
@@ -6332,7 +6318,7 @@ async function handleWebviewMessage(msg) {
   switch (msg.type) {
     case "switch": {
       // 手动切号: 无任何限制 (不检查in-use)
-      // v7.4: 官方模式下不自动翻转
+      // 官方模式下不自动翻转
       if (_mode === "official") {
         vscode.window.showWarningMessage(
           "WAM: 官方模式下无法切号，请先切回WAM模式",
@@ -6341,7 +6327,7 @@ async function handleWebviewMessage(msg) {
       }
       const acc = _store.get(msg.index);
       if (!acc || !acc.password) return;
-      // v7.3: 手动抢占机制 — 如果_switching已超过30s, 强制释放锁允许手动切号
+      // 手动抢占机制 — 如果_switching已超过30s, 强制释放锁允许手动切号
       if (_switching) {
         const lockAge = Date.now() - _switchingStartTime;
         if (lockAge < 30000) {
@@ -6434,7 +6420,7 @@ async function handleWebviewMessage(msg) {
       break;
     }
     case "autoRotate": {
-      // v7.4: 官方模式下智能轮转被禁用(UI按钮也已disabled)
+      // 官方模式下智能轮转被禁用(UI按钮也已disabled)
       if (!isWamMode()) {
         vscode.window.showWarningMessage(
           "WAM: 官方模式下智能轮转已禁用，请先切回WAM模式",
@@ -6477,11 +6463,36 @@ async function handleWebviewMessage(msg) {
       scanMissingExpiry().then(() => refreshAll());
       break;
     }
+    case "setOrigin": {
+      // v17.21 · 分冷热 · 唯变所适 · 太上不知有之
+      // 热路径 · 状态栏静默提示 (用户无感)
+      // 冷路径 · 弹 Reload 按钮 (一次性手续 · 让用户知其所以然)
+      try {
+        const result = await OriginCtl.ensure(msg.mode);
+        if (!result) break;
+        if (result.reload) {
+          const choice = await vscode.window.showInformationMessage(
+            `WAM: ${result.message} · 需要 Reload Window 生效`,
+            "Reload Window",
+            "稍后",
+          );
+          if (choice === "Reload Window")
+            vscode.commands.executeCommand("workbench.action.reloadWindow");
+        } else if (result.message) {
+          vscode.window.setStatusBarMessage(`WAM: ${result.message}`, 3000);
+        }
+      } catch (e) {
+        vscode.window.showErrorMessage(`WAM 本源 · ${e.message}`);
+        log(`setOrigin error: ${e.stack || e.message}`);
+      }
+      refreshAll();
+      break;
+    }
     case "setMode": {
       const newMode = msg.mode === "official" ? "official" : "wam";
       saveMode(newMode);
       if (newMode === "wam") {
-        // v7.4: 回切WAM时重启所有后台设施
+        // 回切WAM时重启所有后台设施
         _restartBackgroundServices();
         if (_store.activeIndex < 0 && _store.pwCount() > 0) {
           const bestI = _store.getBestIndex(-1, false);
@@ -6513,7 +6524,7 @@ async function handleWebviewMessage(msg) {
         }
       }
       if (newMode === "official") {
-        // v7.4: cleanupThirdPartyState is now async (includes windsurf.logout)
+        // cleanupThirdPartyState is now async (includes windsurf.logout)
         const cleaned = await cleanupThirdPartyState();
         vscode.window.showInformationMessage(
           `WAM: 官方模式 — WAM会话已登出，${cleaned}项清理完成。请用Windsurf原生登录您自己的账号`,
@@ -6547,7 +6558,7 @@ class WamViewProvider {
     };
     webviewView.webview.html = buildHtml(this._store);
     webviewView.webview.onDidReceiveMessage(handleWebviewMessage);
-    // v15.1: 通知bridge就绪 — 道法自然: webview可用时才启动依赖native通道的引擎
+    // 通知bridge就绪 — 道法自然: webview可用时才启动依赖native通道的引擎
     _onBridgeReady();
     webviewView.onDidChangeVisibility(() => {
       if (webviewView.visible) _onBridgeReady();
@@ -6577,10 +6588,10 @@ function openEditorPanel() {
   _editorPanel.webview.onDidReceiveMessage(handleWebviewMessage);
   _editorPanel.onDidDispose(() => {
     _editorPanel = null;
-    // v15.1: editor关闭时, 如果sidebar也没有, 标记bridge不可用
+    // editor关闭时, 如果sidebar也没有, 标记bridge不可用
     if (!(_sidebarProvider && _sidebarProvider._view)) _bridgeReady = false;
   });
-  // v15.1: editor panel也是bridge — 通知就绪
+  // editor panel也是bridge — 通知就绪
   _onBridgeReady();
 }
 
@@ -6853,12 +6864,16 @@ body{font:12px/1.5 -apple-system,'Segoe UI',sans-serif;background:var(--bg);colo
 .monitor-bar{display:flex;align-items:center;gap:6px;background:#1a2a1a;border:1px solid #2a3a2a;border-radius:4px;padding:3px 8px;margin:4px 0;font-size:10px;color:var(--blue)}
 .mon-dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
 .mon-stat{color:var(--blue);padding:0 3px}
-.mode-bar{display:flex;align-items:center;gap:6px;margin:6px 0;padding:5px 8px;background:#1a1a2a;border:1px solid #2a2a3a;border-radius:4px}
-.mode-label{font-size:10px;color:var(--blue)}
-.mode-btn{background:#252525;color:var(--blue);border:1px solid #333;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px;transition:all .15s}
+.mode-bar{display:flex;align-items:center;gap:5px;margin:6px 0;padding:5px 8px;background:#1a1a2a;border:1px solid #2a2a3a;border-radius:4px;flex-wrap:wrap}
+.mode-label{font-size:10px;color:var(--blue);margin-right:2px}
+.mode-sep{color:#445;font-size:11px;user-select:none;padding:0 2px}
+.mode-btn{background:#252525;color:var(--blue);border:1px solid #333;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px;transition:all .15s}
 .mode-btn:hover{background:#333;color:var(--blue)}
 .mode-btn.wam-on{background:#1a2a1a;color:var(--green);border-color:#2a4a2a}
 .mode-btn.off-on{background:#2a1a1a;color:var(--red);border-color:#4a2a2a}
+.mode-btn.org-on{background:#1a1a2a;color:#a78bfa;border-color:#3a2a5a}
+.mode-btn.thr-on{background:#2a2310;color:#eab308;border-color:#4a3a1a}
+.origin-hint{color:#888;font-size:10px;margin-left:2px}
 .official-banner{background:#2a1a1a;border:1px solid #4a2a2a;border-radius:4px;padding:6px 10px;margin:6px 0;font-size:11px;color:var(--red);display:flex;align-items:center;gap:6px}
 .official-banner b{color:var(--red)}
 .drought-banner{background:#2a2a1a;border:1px solid #4a4a2a;border-radius:4px;padding:6px 10px;margin:6px 0;font-size:11px;color:var(--orange);display:flex;align-items:center;gap:6px;flex-wrap:wrap}
@@ -6897,20 +6912,18 @@ body{font:12px/1.5 -apple-system,'Segoe UI',sans-serif;background:var(--bg);colo
   ${monitorStatus}
   <div class="mode-bar">
     <span class="mode-label">模式:</span>
-    <button class="mode-btn${_mode === "wam" ? " wam-on" : ""}" onclick="setWamMode('wam')">⚡ WAM切号</button>
-    <button class="mode-btn${_mode === "official" ? " off-on" : ""}" onclick="setWamMode('official')">&#128273; 官方登录</button>
+    <button class="mode-btn${_mode === "wam" ? " wam-on" : ""}" onclick="setWamMode('wam')" title="WAM 多号切换 (账号层)">&#9889; WAM切号</button>
+    <button class="mode-btn${_mode === "official" ? " off-on" : ""}" onclick="setWamMode('official')" title="官方原生登录 (账号层)">&#128273; 官方登录</button>
+    <span class="mode-sep">|</span>
+    <button class="mode-btn${_origin === "invert" ? " org-on" : ""}" onclick="setOrigin('invert')" title="道 Agent · 道德经 SP 注入">&#9775; 道Agent</button>
+    <button class="mode-btn${_origin === "passthrough" || _origin === "off" ? " thr-on" : ""}" onclick="setOrigin('passthrough')" title="官方 Agent · 零改写 (原生 SP)">&#9675; 官方Agent</button>
+    <span class="origin-hint">${_origin === "off" ? "proxy 未启" : `:${_originPort}`}</span>
   </div>
   ${_mode === "official" ? '<div class="official-banner"><b>&#128274; 官方模式 · 万法归宗</b><br>WAM会话已登出 · 切号/监测/心跳/文件监听 — 全部已停止<br>请使用 Windsurf 原生登录 · 点击 WAM切号 恢复</div>' : ""}
   ${stats.drought ? `<div class="drought-banner">&#127964;&#65039; <b>Weekly干旱模式</b> 全池W耗尽·仅靠Daily轮换·周重置${stats.hrsToWeekly.toFixed(1)}h后 · <span style="color:var(--green)">不再因W0无效切号</span></div>` : ""}
 </div>
 
-<!-- v17.12 太上不知有之: 5 显性按钮已内化为自动机制 -->
-<!-- ♪ 智能轮转  → pool-tick 定时自动 (额度变动触发)          -->
-<!-- ♪ 刷新      → store 变更 refreshAll 自动                  -->
-<!-- ♪ 验证清理  → _startAutoVerify 每 6h 自动                   -->
-<!-- ♪ 刷新有效期 → _startAutoExpiry 每 12h 自动                 -->
-<!-- ♪ 管理面板  → Ctrl+Shift+P · "WAM: 管理面板" (命令面板入口) -->
-<!-- 道法自然·无为而无不为·用户如披褐走路·怀玉湛深于内 -->
+<!-- 5 显性按钮已内化为自动机制 · 太上不知有之 -->
 
 <div class="batch-bar" id="batchBar">
   <span>已选 <b id="batchCount">0</b> 个</span>
@@ -6944,6 +6957,7 @@ const vscode = acquireVsCodeApi();
 
 function send(type, index) { vscode.postMessage({type, index}); }
 function setWamMode(mode) { vscode.postMessage({type:'setMode', mode}); }
+function setOrigin(mode) { vscode.postMessage({type:'setOrigin', mode}); }
 function sw(i) { send('switch', i); }
 function cp(i) { vscode.postMessage({type:'copyAccount', index:i}); }
 function rm(i) { send('remove', i); }
@@ -7068,7 +7082,7 @@ async function doAutoRotate(store) {
     return;
   }
   const acc = store.get(bestI);
-  // v7.3.1: 智能轮转也需要抢占检查
+  // 智能轮转也需要抢占检查
   if (_switching) {
     const lockAge = Date.now() - _switchingStartTime;
     if (lockAge < 30000) {
@@ -7106,21 +7120,21 @@ async function doAutoRotate(store) {
 // 文件监听 — 外部bridge兼容
 // ============================================================
 function startFileWatcher() {
-  // v9.3: 防重入 — 已有watcher则不创建新的
+  // 防重入 — 已有watcher则不创建新的
   if (_watcher) return;
   try {
     fs.mkdirSync(WAM_DIR, { recursive: true });
   } catch {}
   _watcher = fs.watch(WAM_DIR, (eventType, filename) => {
-    // v9.3: 同时监听rename和change事件 (不同OS行为不同)
+    // 同时监听rename和change事件 (不同OS行为不同)
     if (
       filename === "oneshot_token.json" &&
       (eventType === "rename" || eventType === "change")
     ) {
       setTimeout(async () => {
-        // v9.3: 先检查文件是否存在, 避免无效rename抛错污染日志
+        // 先检查文件是否存在, 避免无效rename抛错污染日志
         if (!fs.existsSync(TOKEN_FILE)) return;
-        // v7.3.1: 真原子性 — renameSync是文件系统级原子操作, 只有一个实例能成功rename
+        // 真原子性 — renameSync是文件系统级原子操作, 只有一个实例能成功rename
         const claimFile = path.join(WAM_DIR, `_claimed_${_instanceId}.json`);
         let rawData;
         try {
@@ -7179,7 +7193,7 @@ function startFileWatcher() {
 }
 
 // ============================================================
-// v14.0: 自诊断 — 道法自然·验证一切
+// 自诊断 — 道法自然·验证一切
 // ============================================================
 async function selfTest() {
   const results = [];
@@ -7207,7 +7221,7 @@ async function selfTest() {
 
   // 1.5 Chromium原生网络桥 (v15.1: 万法归宗·自动确保)
   try {
-    // v15.1: selfTest时也尝试auto-ensure bridge
+    // selfTest时也尝试auto-ensure bridge
     if (!_getActiveWebview()) _ensureBridgeWebview();
     const wvAvail = !!_getActiveWebview();
     const bridgeSrc =
@@ -7407,6 +7421,8 @@ function activate(context) {
   _loadSnapshots(); // 恢复上次快照 (首次扫描就能检测变化)
   _loadInUse(_store); // 恢复使用中标记 (重启不丢失)
   loadMode();
+  // v17.19 · 本源状态恢复 (ping 校准 · 防 stale state)
+  OriginCtl.init().catch((e) => log(`origin init err: ${e.message}`));
   log(
     `startup mode: ${_mode} | snapshots: ${_quotaSnapshots.size} | inUse: ${_store._inUse.size}`,
   );
@@ -7482,7 +7498,7 @@ function activate(context) {
     }),
     // 手动切号: 无任何限制 (不检查in-use, 不跳过任何账号)
     vscode.commands.registerCommand("wam.switchAccount", async () => {
-      // v7.4: 官方模式下不自动翻转, 明确提示用户
+      // 官方模式下不自动翻转, 明确提示用户
       if (_mode === "official") {
         const choice = await vscode.window.showWarningMessage(
           "WAM: 当前为官方模式，切号将切回WAM模式。确认？",
@@ -7513,7 +7529,7 @@ function activate(context) {
       if (pick) {
         const acc = _store.get(pick.index);
         if (!acc || !acc.password) return;
-        // v7.3.1: 手动抢占机制 — 超过30s强制释放锁
+        // 手动抢占机制 — 超过30s强制释放锁
         if (_switching) {
           const lockAge = Date.now() - _switchingStartTime;
           if (lockAge < 30000) {
@@ -7952,7 +7968,7 @@ function activate(context) {
       }
     }),
     vscode.commands.registerCommand("wam.autoRotate", async () => {
-      // v7.4: 官方模式下智能轮转被禁用
+      // 官方模式下智能轮转被禁用
       if (!isWamMode()) {
         vscode.window.showWarningMessage(
           "WAM: 官方模式下智能轮转已禁用，请先切回WAM模式",
@@ -7963,7 +7979,7 @@ function activate(context) {
       refreshAll();
     }),
     vscode.commands.registerCommand("wam.panicSwitch", async () => {
-      // v7.4: 官方模式下紧急切换也需确认
+      // 官方模式下紧急切换也需确认
       if (_mode === "official") {
         const choice = await vscode.window.showWarningMessage(
           "WAM: 官方模式下紧急切换将切回WAM模式",
@@ -7980,7 +7996,7 @@ function activate(context) {
         return;
       }
       const acc = _store.get(bestI);
-      // v7.3.1: 紧急切换无条件抢占 — 不等待30s, 直接强制释放
+      // 紧急切换无条件抢占 — 不等待30s, 直接强制释放
       if (_switching) {
         log(
           `panicSwitch: 强制释放锁(${Math.round((Date.now() - _switchingStartTime) / 1000)}s)`,
@@ -8053,7 +8069,7 @@ function activate(context) {
     }),
     vscode.commands.registerCommand("wam.wamMode", async () => {
       saveMode("wam");
-      // v7.4: 回切WAM时重启所有后台设施
+      // 回切WAM时重启所有后台设施
       _restartBackgroundServices();
       if (_store.activeIndex < 0 && _store.pwCount() > 0) {
         const bestI = _store.getBestIndex(-1, false);
@@ -8100,7 +8116,39 @@ function activate(context) {
       if (_store._inUse.size > 0) msg += ` | 使用中: ${inUseEmails}`;
       vscode.window.showInformationMessage(msg);
     }),
-    // v14.0: 自诊断命令 — 验证一切
+    // 自诊断命令 — 验证一切
+    // v17.19 · 本源三命令 (invert / passthrough / off)
+    vscode.commands.registerCommand("wam.originInvert", async () => {
+      try {
+        const r = await OriginCtl.ensure("invert");
+        if (r && r.message)
+          vscode.window.showInformationMessage(`WAM 本源: ${r.message}`);
+      } catch (e) {
+        vscode.window.showErrorMessage(`WAM 本源 · ${e.message}`);
+      }
+      refreshAll();
+    }),
+    vscode.commands.registerCommand("wam.originPassthrough", async () => {
+      try {
+        const r = await OriginCtl.ensure("passthrough");
+        if (r && r.message)
+          vscode.window.showInformationMessage(`WAM 本源: ${r.message}`);
+      } catch (e) {
+        vscode.window.showErrorMessage(`WAM 本源 · ${e.message}`);
+      }
+      refreshAll();
+    }),
+    vscode.commands.registerCommand("wam.originOff", async () => {
+      try {
+        await OriginCtl.deactivate();
+        vscode.window.showInformationMessage(
+          "WAM 本源: 已关闭 · 请 Reload Window 生效",
+        );
+      } catch (e) {
+        vscode.window.showErrorMessage(`WAM 本源 · ${e.message}`);
+      }
+      refreshAll();
+    }),
     vscode.commands.registerCommand("wam.selfTest", async () => {
       vscode.window.showInformationMessage("WAM: 自诊断运行中...");
       const result = await selfTest();
@@ -8127,7 +8175,7 @@ function activate(context) {
         if (!isWamMode() || _switching || !_store || _store.activeIndex < 0)
           return;
         // 检测Windsurf AI输出中的rate limit错误
-        // v14.3.1: 不调用getText() — 每次击键都序列化整个文档是纯开销
+        // 不调用getText() — 每次击键都序列化整个文档是纯开销
         if (!e.contentChanges.length) return;
         // 仅检查最近写入的内容 (性能优化: 不扫描整个文档)
         const lastChange = e.contentChanges[e.contentChanges.length - 1];
@@ -8205,7 +8253,7 @@ function activate(context) {
   _lastSelfActivity = Date.now(); // 启动即视为活跃
 
   // ── 实例协调: 心跳 + 声明 (根治: 多实例抢号) ──
-  // v7.4: 官方模式下不启动心跳, 不写入instance claim
+  // 官方模式下不启动心跳, 不写入instance claim
   if (isWamMode()) {
     _writeInstanceClaim(
       _store.activeIndex >= 0 ? _store.get(_store.activeIndex)?.email : "",
@@ -8266,7 +8314,7 @@ function activate(context) {
       try {
         _saveTokenCache();
       } catch {}
-      // v14.3: restartExtensionHost — 只重启扩展进程, 对话/编辑器/终端全部保留
+      // restartExtensionHost — 只重启扩展进程, 对话/编辑器/终端全部保留
       // 根因: reloadWindow重载整个窗口→杀死所有对话 | restartExtensionHost仅触扩展→无感
       setTimeout(() => {
         vscode.commands.executeCommand("workbench.action.restartExtensionHost");
@@ -8284,7 +8332,7 @@ function activate(context) {
 
   // ── 延迟启动 ──
   setTimeout(() => {
-    // v7.4: 官方模式下不启动文件监听, 不处理待注入token
+    // 官方模式下不启动文件监听, 不处理待注入token
     if (isWamMode()) {
       startFileWatcher();
       if (fs.existsSync(TOKEN_FILE)) {
@@ -8313,7 +8361,7 @@ function activate(context) {
       // v11: 启动时立即启动引擎 (不再等首次切号, 避免鸡生蛋问题)
       _ensureEngines();
       log("startup: WAM模式 — 监测引擎+Token活水池已启动");
-      // v14.0: 启动自诊断 — 静默检测, 记录日志, 不打扰用户
+      // 启动自诊断 — 静默检测, 记录日志, 不打扰用户
       selfTest()
         .then((r) => {
           if (!r.ok)
@@ -8332,7 +8380,542 @@ function activate(context) {
   }, 3000);
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// v17.19 · 本源 OriginController · 管家遥控模式 (道法自然·水善利万物而不争)
+// ────────────────────────────────────────────────────────────────────────
+// 关联: `000-本源_Origin/源.js` (反代) + `000-本源_Origin/锚.py` (DPAPI 锚定)
+// 职: 软编码发现 → spawn/stop 反代 → anchor/restore 三锚 → mode 切换 → 持久化
+// 不动: 本源三件套 (源.js / _dao_81.txt / 锚.py · L28 已归真)
+// 七处自适应: 路径链 · 端口扫空闲 · node 路径 · python 路径 · Windsurf 数据目录
+//             · 道德经位置 · 状态自校准
+// ════════════════════════════════════════════════════════════════════════
+const {
+  spawn: _origSpawn,
+  spawnSync: _origSpawnSync,
+} = require("child_process");
+const ORIGIN_DEFAULT_PORT = 8889;
+const ORIGIN_PORT_MAX = 8999;
+
+function _origLog(msg) {
+  log(`[origin] ${msg}`);
+}
+
+// v17.20 · 内嵌本源三件套 (bundled-origin/) + 自解压到 ~/.wam-hot/origin
+// 一个 VSIX 即自足 · 任何电脑/用户/网络 装了就能用 · 道法自然 · 水善利万物而不争
+const ORIGIN_BUNDLED_DIR = path.join(__dirname, "bundled-origin");
+const ORIGIN_EXTRACT_DIR = path.join(os.homedir(), ".wam-hot", "origin");
+const ORIGIN_BUNDLED_FILES = ["源.js", "锚.py", "_dao_81.txt", "VERSION"];
+
+function _origReadVersion(dir) {
+  try {
+    return (
+      fs
+        .readFileSync(path.join(dir, "VERSION"), "utf8")
+        .trim()
+        .split(/\r?\n/)[0] || ""
+    );
+  } catch {
+    return "";
+  }
+}
+// 首次/版本升级时 · 把 VSIX 内嵌三件套解压到用户可写目录
+// 幂等 · VERSION 一致则 skip · 不一致则覆盖 (VSIX 升级语义)
+function _origExtractBundled() {
+  if (!fs.existsSync(path.join(ORIGIN_BUNDLED_DIR, "源.js"))) return false;
+  const bv = _origReadVersion(ORIGIN_BUNDLED_DIR);
+  if (!bv) return false;
+  const ev = _origReadVersion(ORIGIN_EXTRACT_DIR);
+  const complete = fs.existsSync(path.join(ORIGIN_EXTRACT_DIR, "源.js"));
+  if (ev === bv && complete) return true;
+  try {
+    fs.mkdirSync(ORIGIN_EXTRACT_DIR, { recursive: true });
+    for (const f of ORIGIN_BUNDLED_FILES) {
+      const src = path.join(ORIGIN_BUNDLED_DIR, f);
+      if (!fs.existsSync(src)) continue;
+      fs.copyFileSync(src, path.join(ORIGIN_EXTRACT_DIR, f));
+    }
+    _origLog(
+      `extracted bundled ${ev || "(fresh)"} → ${bv} @ ${ORIGIN_EXTRACT_DIR}`,
+    );
+    return true;
+  } catch (e) {
+    _origLog(`extract failed: ${e.message}`);
+    return false;
+  }
+}
+
+// ── 路径发现链 (v17.20 · 自解压 + 9 级 fallback · 唯变所适) ──────────
+function _origFindDir() {
+  const tryPaths = [];
+  try {
+    const j = JSON.parse(fs.readFileSync(ORIGIN_CACHE_FILE, "utf8"));
+    if (j && j.dir) tryPaths.push(j.dir);
+  } catch {}
+  if (process.env.WAM_ORIGIN_DIR) tryPaths.push(process.env.WAM_ORIGIN_DIR);
+  const ws = vscode.workspace.workspaceFolders;
+  if (ws) {
+    for (const f of ws) {
+      for (const cand of [
+        "000-本源_Origin",
+        "Windsurf万法归宗/000-本源_Origin",
+        "../Windsurf万法归宗/000-本源_Origin",
+        "../../Windsurf万法归宗/000-本源_Origin",
+      ]) {
+        tryPaths.push(path.join(f.uri.fsPath, cand));
+      }
+    }
+  }
+  // v17.20 · 自解压优先: 装过 VSIX 就有 · 任何新机都不空手而归
+  if (_origExtractBundled()) tryPaths.push(ORIGIN_EXTRACT_DIR);
+  const home = os.homedir();
+  const abs = [
+    path.join(home, ".wam-hot", "origin"),
+    path.join(home, "Windsurf万法归宗", "000-本源_Origin"),
+  ];
+  for (const drive of ["e:", "E:", "d:", "D:", "c:", "C:", "f:", "F:"]) {
+    abs.push(`${drive}/道/道生一/一生二/Windsurf万法归宗/000-本源_Origin`);
+  }
+  tryPaths.push(...abs);
+  // 最终兜底 · VSIX 内嵌只读目录 (锚.py 备份写不了则退化为纯 spawn 模式)
+  if (fs.existsSync(path.join(ORIGIN_BUNDLED_DIR, "源.js")))
+    tryPaths.push(ORIGIN_BUNDLED_DIR);
+  for (const p of tryPaths) {
+    try {
+      if (p && fs.existsSync(path.join(p, "源.js"))) {
+        const dir = path.normalize(p);
+        try {
+          fs.mkdirSync(WAM_DIR, { recursive: true });
+          fs.writeFileSync(
+            ORIGIN_CACHE_FILE,
+            JSON.stringify({ dir, ts: Date.now() }),
+          );
+        } catch {}
+        return dir;
+      }
+    } catch {}
+  }
+  return null;
+}
+
+// ── 依赖发现 (node / python · 软编码) ──────────────────────────────────
+function _origFindExec(names) {
+  for (const n of names) {
+    try {
+      const r = _origSpawnSync(n, ["--version"], {
+        encoding: "utf8",
+        timeout: 3000,
+      });
+      if (r && (r.status === 0 || (r.status === null && !r.error))) {
+        if ((r.stdout || r.stderr || "").length > 0) return n;
+      }
+    } catch {}
+  }
+  return null;
+}
+function _origFindNode() {
+  try {
+    const execPath = process.execPath;
+    const resDir = path.dirname(execPath);
+    const cand = [
+      path.join(resDir, "node.exe"),
+      path.join(resDir, "resources", "app", "node.exe"),
+      path.join(resDir, "..", "node.exe"),
+    ];
+    for (const c of cand) {
+      if (fs.existsSync(c)) return c;
+    }
+  } catch {}
+  return _origFindExec(["node.exe", "node"]);
+}
+function _origFindPython() {
+  if (process.env.WAM_PYTHON && fs.existsSync(process.env.WAM_PYTHON))
+    return process.env.WAM_PYTHON;
+  return _origFindExec([
+    "python.exe",
+    "python3.exe",
+    "python",
+    "python3",
+    "py",
+  ]);
+}
+
+// ── 控制面 HTTP (本地 :PORT/origin/...) ────────────────────────────────
+function _origFetch(method, urlPath, bodyObj, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const body = bodyObj ? JSON.stringify(bodyObj) : null;
+    const port = _originPort || ORIGIN_DEFAULT_PORT;
+    const req = http.request(
+      {
+        host: "127.0.0.1",
+        port,
+        path: urlPath,
+        method,
+        headers: body
+          ? {
+              "content-type": "application/json",
+              "content-length": Buffer.byteLength(body),
+            }
+          : {},
+        timeout: timeoutMs || 2000,
+      },
+      (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          try {
+            const text = Buffer.concat(chunks).toString("utf8");
+            resolve({
+              status: res.statusCode,
+              body: text ? JSON.parse(text) : null,
+            });
+          } catch (e) {
+            reject(e);
+          }
+        });
+      },
+    );
+    req.on("error", reject);
+    req.on("timeout", () => {
+      req.destroy(new Error("origin_timeout"));
+    });
+    if (body) req.end(body);
+    else req.end();
+  });
+}
+
+// ── 端口扫空闲 (8889..8999) ───────────────────────────────────────────
+function _origFindFreePort(start) {
+  return new Promise((resolve) => {
+    let p = start || ORIGIN_DEFAULT_PORT;
+    const tryOne = () => {
+      if (p > ORIGIN_PORT_MAX) return resolve(0);
+      const srv = net.createServer();
+      srv.once("error", () => {
+        p++;
+        tryOne();
+      });
+      srv.once("listening", () => {
+        srv.close(() => resolve(p));
+      });
+      srv.listen(p, "127.0.0.1");
+    };
+    tryOne();
+  });
+}
+
+// ── 状态持久化 ────────────────────────────────────────────────────────
+function _origLoadState() {
+  try {
+    return JSON.parse(fs.readFileSync(ORIGIN_STATE_FILE, "utf8"));
+  } catch {
+    return { mode: "off", port: 0, pid: 0 };
+  }
+}
+function _origSaveState() {
+  try {
+    fs.mkdirSync(WAM_DIR, { recursive: true });
+    fs.writeFileSync(
+      ORIGIN_STATE_FILE,
+      JSON.stringify({
+        mode: _origin,
+        port: _originPort,
+        pid: _originPid,
+        ts: Date.now(),
+      }),
+    );
+  } catch {}
+}
+
+// ── spawn 源.js (detached · stdio 归档) ────────────────────────────────
+async function _origSpawnProxy(dir) {
+  const nodeExe = _origFindNode();
+  if (!nodeExe) throw new Error("未找到 node (请装 Node.js 或设 env PATH)");
+  const jsPath = path.join(dir, "源.js");
+  if (!fs.existsSync(jsPath)) throw new Error(`源.js 不存在: ${jsPath}`);
+  const port = await _origFindFreePort(ORIGIN_DEFAULT_PORT);
+  if (!port)
+    throw new Error(`端口 ${ORIGIN_DEFAULT_PORT}..${ORIGIN_PORT_MAX} 全被占`);
+  try {
+    fs.mkdirSync(WAM_DIR, { recursive: true });
+  } catch {}
+  const out = fs.openSync(ORIGIN_LOG_FILE, "a");
+  const err = fs.openSync(ORIGIN_ERR_FILE, "a");
+  const child = _origSpawn(nodeExe, [jsPath], {
+    cwd: dir,
+    env: { ...process.env, ORIGIN_PORT: String(port) },
+    detached: true,
+    stdio: ["ignore", out, err],
+    windowsHide: true,
+  });
+  child.unref();
+  const pid = child.pid;
+  _originPort = port;
+  _originPid = pid;
+  let ok = false;
+  for (let i = 0; i < 15; i++) {
+    await new Promise((r) => setTimeout(r, 200));
+    try {
+      const r = await _origFetch("GET", "/origin/ping", null, 800);
+      if (r.status === 200 && r.body && r.body.ok) {
+        ok = true;
+        break;
+      }
+    } catch {}
+  }
+  if (!ok)
+    throw new Error(
+      `源.js 未在 :${port} 起来 (pid=${pid}) · 查 ${ORIGIN_ERR_FILE}`,
+    );
+  _origLog(`proxy up · pid=${pid} port=${port} node=${nodeExe}`);
+  return { pid, port };
+}
+
+function _origKillByPort(port) {
+  if (!port) return;
+  try {
+    _origSpawnSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-Command",
+        `Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }`,
+      ],
+      { timeout: 5000 },
+    );
+  } catch {}
+}
+function _origKillPid(pid) {
+  if (!pid) return;
+  try {
+    process.kill(pid);
+  } catch {}
+}
+
+// ── anchor / restore (python 调 锚.py · 三锚齐发) ──────────────────────
+function _origAnchorCmd(dir, subcmd, extraArgs) {
+  const py = _origFindPython();
+  if (!py)
+    throw new Error("未找到 Python (DPAPI 锚定需 python + cryptography)");
+  const anchorPy = path.join(dir, "锚.py");
+  if (!fs.existsSync(anchorPy)) throw new Error(`锚.py 不存在: ${anchorPy}`);
+  const args = [anchorPy, subcmd, ...(extraArgs || [])];
+  const r = _origSpawnSync(py, args, {
+    cwd: dir,
+    encoding: "utf8",
+    timeout: 15000,
+    env: { ...process.env, PYTHONIOENCODING: "utf-8" },
+  });
+  if (r.error) throw r.error;
+  if (r.status !== 0) {
+    throw new Error(
+      `锚.py ${subcmd} rc=${r.status}: ${(r.stderr || "").slice(0, 400)}`,
+    );
+  }
+  return r.stdout || "";
+}
+async function _origAnchorAll(dir, port) {
+  const url = `http://127.0.0.1:${port}`;
+  const inferUrl = `${url}/i`;
+  _origAnchorCmd(dir, "anchor", [url]);
+  try {
+    _origAnchorCmd(dir, "anchor-inference", [inferUrl]);
+  } catch (e) {
+    _origLog(`anchor-inference: ${e.message}`);
+  }
+  try {
+    _origAnchorCmd(dir, "anchor-globalstate", [url, inferUrl]);
+  } catch (e) {
+    _origLog(`anchor-globalstate: ${e.message}`);
+  }
+}
+async function _origRestoreAll(dir) {
+  try {
+    _origAnchorCmd(dir, "restore");
+  } catch (e) {
+    _origLog(`restore: ${e.message}`);
+  }
+  try {
+    _origAnchorCmd(dir, "restore-inference");
+  } catch (e) {
+    _origLog(`restore-inf: ${e.message}`);
+  }
+  try {
+    _origAnchorCmd(dir, "restore-globalstate");
+  } catch (e) {
+    _origLog(`restore-gs: ${e.message}`);
+  }
+}
+
+// ── 对外控制器 (init · activate · deactivate · toggle · deactivateSync) ──
+const OriginCtl = {
+  async status() {
+    try {
+      const r = await _origFetch("GET", "/origin/ping");
+      if (r.status === 200 && r.body && r.body.ok)
+        return { alive: true, ...r.body };
+    } catch {}
+    return { alive: false };
+  },
+  async init() {
+    const s = _origLoadState();
+    _origin = s.mode || "off";
+    _originPort = s.port || 0;
+    _originPid = s.pid || 0;
+    if (_origin !== "off") {
+      const st = await this.status();
+      if (!st.alive) {
+        _origLog(`init: stale state (${_origin}@${_originPort}) → reset off`);
+        _origin = "off";
+        _originPort = 0;
+        _originPid = 0;
+        _origSaveState();
+      } else {
+        _origin = st.mode || _origin;
+        _origLog(`init: resume ${_origin} on :${_originPort} pid=${st.pid}`);
+      }
+    }
+  },
+  async activate(mode) {
+    if (mode !== "invert" && mode !== "passthrough")
+      throw new Error(`bad mode: ${mode}`);
+    const dir = _origFindDir();
+    if (!dir)
+      throw new Error(
+        "未找到 000-本源_Origin (源.js). 请设 env WAM_ORIGIN_DIR 或把目录放在工作区/常见位置",
+      );
+    const st = await this.status();
+    if (st.alive) {
+      _originPort = st.port || _originPort;
+      _originPid = st.pid || _originPid;
+      _origLog(`activate: proxy 已在 :${_originPort}, 复用`);
+    } else {
+      const r = await _origSpawnProxy(dir);
+      _originPort = r.port;
+      _originPid = r.pid;
+    }
+    await _origFetch("POST", "/origin/mode", { mode });
+    await _origAnchorAll(dir, _originPort);
+    _origin = mode;
+    _origSaveState();
+    _origLog(`activate mode=${mode} port=${_originPort}`);
+  },
+  // v17.21 · 分冷热 · 唯变所适 · 太上不知有之
+  // 冷路径 (proxy 未活): 需 spawn + anchor + Reload Window
+  // 热路径 (proxy 已活): 纯 HTTP POST /origin/mode · 无 Reload · 用户无感
+  // 官方Agent + off 等价语义: 皆"原生 SP 不改" · 免多余 spawn
+  async ensure(targetMode) {
+    if (targetMode !== "invert" && targetMode !== "passthrough")
+      throw new Error(`bad mode: ${targetMode}`);
+    const st = await this.status();
+    const label = targetMode === "invert" ? "道Agent" : "官方Agent";
+    // 1. proxy 未活 + 目标 passthrough: 停留 off (两者皆"零改写") · 零操作
+    if (!st.alive && targetMode === "passthrough") {
+      _origin = "off";
+      _originPort = 0;
+      _originPid = 0;
+      _origSaveState();
+      _origLog(`ensure: ${label} · proxy 未启 · 停留 off (等价零改写)`);
+      return {
+        mode: "off",
+        hot: true,
+        reload: false,
+        message: `${label} · 原生直通 (proxy 未启)`,
+      };
+    }
+    // 2. proxy 已活 + 目标同模式: 幂等 · 零操作
+    if (st.alive && (st.mode || _origin) === targetMode) {
+      _origin = targetMode;
+      _originPort = st.port || _originPort;
+      _originPid = st.pid || _originPid;
+      _origSaveState();
+      return {
+        mode: targetMode,
+        hot: true,
+        reload: false,
+        message: `已是 ${label}`,
+      };
+    }
+    // 3. proxy 已活 + 目标异模式: 热切 (纯 HTTP · 无 Reload · 不重 anchor)
+    if (st.alive) {
+      _originPort = st.port || _originPort;
+      _originPid = st.pid || _originPid;
+      await _origFetch("POST", "/origin/mode", { mode: targetMode });
+      _origin = targetMode;
+      _origSaveState();
+      _origLog(
+        `ensure hot-swap: ${st.mode} → ${targetMode} on :${_originPort}`,
+      );
+      return {
+        mode: targetMode,
+        hot: true,
+        reload: false,
+        message: `${label} · 无感热切`,
+      };
+    }
+    // 4. 冷路径: spawn + anchor + Reload
+    await this.activate(targetMode);
+    return {
+      mode: targetMode,
+      hot: false,
+      reload: true,
+      message: `${label} 已启 :${_originPort}`,
+    };
+  },
+  async deactivate() {
+    const dir = _origFindDir();
+    if (dir) {
+      await _origRestoreAll(dir);
+    }
+    _origKillPid(_originPid);
+    _origKillByPort(_originPort);
+    _origin = "off";
+    _originPort = 0;
+    _originPid = 0;
+    _origSaveState();
+    _origLog("deactivate · restored + stopped");
+  },
+  async toggle(mode) {
+    if (_origin === mode) {
+      await this.deactivate();
+      return { mode: "off", message: `已关闭 · 请 Reload Window 生效` };
+    }
+    await this.activate(mode);
+    return {
+      mode,
+      message: `${mode === "invert" ? "道德经注入" : "直通"} 已启 @ :${_originPort} · 请 Reload Window 生效`,
+    };
+  },
+  deactivateSync() {
+    const dir = _origFindDir();
+    if (dir) {
+      try {
+        _origAnchorCmd(dir, "restore");
+      } catch {}
+      try {
+        _origAnchorCmd(dir, "restore-inference");
+      } catch {}
+      try {
+        _origAnchorCmd(dir, "restore-globalstate");
+      } catch {}
+    }
+    _origKillPid(_originPid);
+    _origKillByPort(_originPort);
+  },
+  get mode() {
+    return _origin;
+  },
+  get port() {
+    return _originPort;
+  },
+};
+
 function deactivate() {
+  // v17.19 · 本源 best-effort 还原 (同步, 不阻塞 deactivate)
+  try {
+    OriginCtl.deactivateSync();
+  } catch (e) {
+    log(`origin deactivate err: ${e && e.message}`);
+  }
   if (_watcher) {
     _watcher.close();
     _watcher = null;
@@ -8358,7 +8941,7 @@ function deactivate() {
     clearInterval(_reloadWatcher);
     _reloadWatcher = null;
   }
-  // v15.1: bridge cleanup
+  // bridge cleanup
   if (_bridgeEnsureTimer) {
     clearTimeout(_bridgeEnsureTimer);
     _bridgeEnsureTimer = null;
@@ -8382,7 +8965,7 @@ function deactivate() {
   try {
     if (_store) _saveInUse(_store);
   } catch {}
-  // v14.3.1: 先落盘再清缓存 — 根治deactivate时_tokenCacheDirty=true导致空cache覆盖磁盘
+  // 先落盘再清缓存 — 根治deactivate时_tokenCacheDirty=true导致空cache覆盖磁盘
   try {
     _saveTokenCache();
   } catch {}

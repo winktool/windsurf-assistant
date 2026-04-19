@@ -1,7 +1,9 @@
-# 道法自然 — VSIX只含切号引擎本源
+# Windsurf Assistant · 道法自然 · VSIX 内仅六器
 **
 !package.json
 !README.md
 !CHANGELOG.md
 !LICENSE
-!wam-bundle/**
+!extension.js
+!bundled-origin/**
+!media/**
