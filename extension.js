@@ -397,7 +397,7 @@ const RELOAD_SIGNAL = path.join(WAM_DIR, "_reload_signal");
 const RELOAD_READY = path.join(WAM_DIR, "_reload_ready");
 // TRIAL_MAX_DAYS已移除 — 官方Trial是14天(非90天), 且过期后仍有配额, 不再用时间猜测过期
 // PURGE_INTERVAL_MS → _getPurgeIntervalMs() (v17.1 getter化)
-const WAM_VERSION = "17.22.0"; // v17.22.0: 根本归一 · restore-all-force 三层扫 · 启动自净 · 官方Agent 真撤锚 · proxy 加 URL/上游/trailer 日志 · 改写失败兜底 · 逆流寻本源
+const WAM_VERSION = "17.23.0"; // v17.23.0: 软编码归本源 · anchor.py ASCII 名防编码断裂 · restore-all-force 补扫 codeium.apiServerUrl · 防孤儿 proxy · 三锚全 try/catch
 
 let _store = null;
 let _sidebarProvider = null;
@@ -8442,7 +8442,13 @@ function _origLog(msg) {
 // 一个 VSIX 即自足 · 任何电脑/用户/网络 装了就能用 · 道法自然 · 水善利万物而不争
 const ORIGIN_BUNDLED_DIR = path.join(__dirname, "bundled-origin");
 const ORIGIN_EXTRACT_DIR = path.join(os.homedir(), ".wam-hot", "origin");
-const ORIGIN_BUNDLED_FILES = ["源.js", "锚.py", "_dao_81.txt", "VERSION"];
+const ORIGIN_BUNDLED_FILES = [
+  "源.js",
+  "锚.py",
+  "anchor.py",
+  "_dao_81.txt",
+  "VERSION",
+];
 
 function _origReadVersion(dir) {
   try {
@@ -8730,12 +8736,15 @@ function _origKillPid(pid) {
 }
 
 // ── anchor / restore (python 调 锚.py · 三锚齐发) ──────────────────────
+// v17.23 · 软编码: 优先 ASCII 名 (anchor.py) → 中文名 (锚.py) → 报错
+//         解决 Windows 编码链断裂导致 spawnSync 静默失败的根因
 function _origAnchorCmd(dir, subcmd, extraArgs) {
   const py = _origFindPython();
   if (!py)
     throw new Error("未找到 Python (DPAPI 锚定需 python + cryptography)");
-  const anchorPy = path.join(dir, "锚.py");
-  if (!fs.existsSync(anchorPy)) throw new Error(`锚.py 不存在: ${anchorPy}`);
+  const candidates = [path.join(dir, "anchor.py"), path.join(dir, "锚.py")];
+  const anchorPy = candidates.find((p) => fs.existsSync(p));
+  if (!anchorPy) throw new Error(`anchor.py/锚.py 均不存在: ${dir}`);
   const args = [anchorPy, subcmd, ...(extraArgs || [])];
   const r = _origSpawnSync(py, args, {
     cwd: dir,
@@ -8746,25 +8755,35 @@ function _origAnchorCmd(dir, subcmd, extraArgs) {
   if (r.error) throw r.error;
   if (r.status !== 0) {
     throw new Error(
-      `锚.py ${subcmd} rc=${r.status}: ${(r.stderr || "").slice(0, 400)}`,
+      `anchor.py ${subcmd} rc=${r.status}: ${(r.stderr || "").slice(0, 400)}`,
     );
   }
   return r.stdout || "";
 }
+// v17.23 · 三锚全部 try/catch · 任一失败不阻塞其余 · 返回成功计数
 async function _origAnchorAll(dir, port) {
   const url = `http://127.0.0.1:${port}`;
   const inferUrl = `${url}/i`;
-  _origAnchorCmd(dir, "anchor", [url]);
+  let ok = 0;
+  try {
+    _origAnchorCmd(dir, "anchor", [url]);
+    ok++;
+  } catch (e) {
+    _origLog(`anchor-secret: ${e.message}`);
+  }
   try {
     _origAnchorCmd(dir, "anchor-inference", [inferUrl]);
+    ok++;
   } catch (e) {
     _origLog(`anchor-inference: ${e.message}`);
   }
   try {
     _origAnchorCmd(dir, "anchor-globalstate", [url, inferUrl]);
+    ok++;
   } catch (e) {
     _origLog(`anchor-globalstate: ${e.message}`);
   }
+  return ok;
 }
 async function _origRestoreAll(dir) {
   try {
@@ -8828,6 +8847,7 @@ const OriginCtl = {
         "未找到 000-本源_Origin (源.js). 请设 env WAM_ORIGIN_DIR 或把目录放在工作区/常见位置",
       );
     const st = await this.status();
+    let freshSpawn = false;
     if (st.alive) {
       _originPort = st.port || _originPort;
       _originPid = st.pid || _originPid;
@@ -8836,12 +8856,28 @@ const OriginCtl = {
       const r = await _origSpawnProxy(dir);
       _originPort = r.port;
       _originPid = r.pid;
+      freshSpawn = true;
     }
     await _origFetch("POST", "/origin/mode", { mode });
-    await _origAnchorAll(dir, _originPort);
+    // v17.23 · 防孤儿 proxy: anchor 全部失败则 kill 刚 spawn 的 proxy
+    const anchored = await _origAnchorAll(dir, _originPort);
+    if (anchored === 0 && freshSpawn) {
+      _origLog(`activate: anchor 全部失败, kill 孤儿 proxy pid=${_originPid}`);
+      _origKillPid(_originPid);
+      _origKillByPort(_originPort);
+      _origin = "off";
+      _originPort = 0;
+      _originPid = 0;
+      _origSaveState();
+      throw new Error(
+        "anchor 全部失败 (可能 Python/锚.py 编码问题), proxy 已回收",
+      );
+    }
     _origin = mode;
     _origSaveState();
-    _origLog(`activate mode=${mode} port=${_originPort}`);
+    _origLog(
+      `activate mode=${mode} port=${_originPort} anchored=${anchored}/3`,
+    );
   },
   // v17.21 · 分冷热 · 唯变所适 · 太上不知有之
   // 冷路径 (proxy 未活): 需 spawn + anchor + Reload Window
