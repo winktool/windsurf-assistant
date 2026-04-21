@@ -397,7 +397,7 @@ const RELOAD_SIGNAL = path.join(WAM_DIR, "_reload_signal");
 const RELOAD_READY = path.join(WAM_DIR, "_reload_ready");
 // TRIAL_MAX_DAYS已移除 — 官方Trial是14天(非90天), 且过期后仍有配额, 不再用时间猜测过期
 // PURGE_INTERVAL_MS → _getPurgeIntervalMs() (v17.1 getter化)
-const WAM_VERSION = "17.36.0"; // v17.36.0: 反者道之动 · 回归本源 · proxy/origin 代码剥离 · WAM 专注无感切号 · 道Agent 独立为 020-道VSIX_DaoAgi
+const WAM_VERSION = "17.37.0"; // v17.37.0: 道法自然 · 四处持久化缺失修复 · _saveStore→_store.save · doAutoRotate/panicSwitch/switchAccount 落盘补全
 
 let _store = null;
 let _sidebarProvider = null;
@@ -1075,7 +1075,10 @@ function _restartBackgroundServices() {
       _cleanDeadInstances();
     }, _getInstanceHeartbeatMs());
   }
-  log("services restarted: watcher + heartbeat");
+  // v17.37 道法自然: 引擎随服务同生 — monitor/scan/tokenPool/autoUpdate/autoVerify/autoExpiry
+  // _ensureEngines 幂等 (已启动则跳过) · 官方→WAM 切换时确保引擎全部就位 · 不再依赖下游各处单独调用
+  _ensureEngines();
+  log("services restarted: watcher + heartbeat + engines");
 }
 
 // ============================================================
@@ -3808,7 +3811,7 @@ async function fetchAccountQuota(email, password) {
       _tokenCache.delete(key);
       _invalidateDevinCache(email);
       log(`fetchQuota: ${email} MIGRATED → marked devin · Devin路径下次生效`);
-      _saveStore();
+      _store.save();
     }
     return {
       ok: false,
@@ -5113,6 +5116,14 @@ async function _tokenPoolTick() {
           const r = await _devinFullSwitch(acc.email, acc.password);
           if (r.ok) {
             _poolFailStreak.delete(ek);
+            // v17.37: 补全 Devin 元数据 — 无此则 getBestIndex 因 _unverified+!_devinVerified 跳过
+            acc._devinVerified = true;
+            acc._lastVerified = Date.now();
+            acc._devinSessionAt = Date.now();
+            if (r.accountId) acc._devinAccountId = r.accountId;
+            if (r.primaryOrgId) acc._devinOrgId = r.primaryOrgId;
+            if (r.userId) acc._devinUserId = r.userId;
+            delete acc._unverified;
             log(`🔥 pool: +${acc.email.substring(0, 20)} (Devin sessionToken)`);
           } else {
             const fs0 = _poolFailStreak.get(ek) || { count: 0, lastFail: 0 };
@@ -5150,15 +5161,25 @@ async function _tokenPoolTick() {
           // v13: 记录失败原因 (以前静默吞掉 → 池为什么不填无从诊断)
           if (/INVALID|NOT_FOUND|DISABLED|WRONG/.test(lr.error || "")) {
             // 拉黑前探测 Devin-only — 道法自然·不让 Devin 账号永久殉葬
+            // v17.37: 升级为 _devinFullSwitch 全链路验证 + 补全 _devinVerified 元数据
             try {
-              const dv = await _devinLogin(acc.email, acc.password);
+              const dv = await _devinFullSwitch(acc.email, acc.password);
               if (dv.ok) {
                 acc._authSystem = "devin";
                 acc._devinUserId = dv.userId;
                 acc._devinDetectedAt = Date.now();
+                acc._devinSessionAt = Date.now();
+                acc._devinVerified = true;
+                acc._lastVerified = Date.now();
+                if (dv.accountId) acc._devinAccountId = dv.accountId;
+                if (dv.primaryOrgId) acc._devinOrgId = dv.primaryOrgId;
+                delete acc._unverified;
+                delete acc._verifyFailed;
+                delete acc._verifyFailedAt;
+                acc._verifyFailedCount = 0;
                 if (_store && typeof _store.save === "function") _store.save();
                 log(
-                  `🔥 pool: ${acc.email.substring(0, 20)} 标记 Devin-only (uid=${dv.userId}) — 不拉黑, 等待 Devin 切号支持`,
+                  `🔥 pool: ${acc.email.substring(0, 20)} Devin 全链路通 (accountId=${(dv.accountId || "").substring(0, 16)}...) — 已标记+验证`,
                 );
                 return; // 跳过拉黑
               }
@@ -7165,6 +7186,10 @@ async function doAutoRotate(store) {
     if (result.ok) {
       store.activeIndex = bestI;
       store.switchCount++;
+      _quotaSnapshots.delete(acc.email.toLowerCase());
+      _snapshotDirty = true;
+      _schedulePersist();
+      store.save();
       const droughtTag = drought ? " [干旱·D轮换]" : "";
       vscode.window.showInformationMessage(
         `WAM: 智能轮转到 ${result.account} (${result.ms}ms)${droughtTag}`,
@@ -7616,6 +7641,7 @@ function activate(context) {
             _quotaSnapshots.delete(acc.email.toLowerCase()); // 重置快照基准
             _snapshotDirty = true;
             _schedulePersist();
+            _store.save();
             vscode.window.showInformationMessage(
               `WAM: 已手动切换到 ${result.account}`,
             );
@@ -8075,6 +8101,7 @@ function activate(context) {
           _quotaSnapshots.delete(acc.email.toLowerCase());
           _snapshotDirty = true;
           _schedulePersist();
+          _store.save();
           vscode.window.showInformationMessage(
             `WAM: 紧急切换到 ${result.account} (${result.ms}ms)`,
           );

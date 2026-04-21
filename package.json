@@ -2,7 +2,7 @@
   "name": "windsurf-assistant",
   "displayName": "Windsurf Assistant · 无感切号",
   "description": "无感切号 (百号轮转 · 额度耗尽自切 · Devin 迁移适配) · 道法自然",
-  "version": "17.36.0",
+  "version": "17.37.0",
   "publisher": "zhouyoukang",
   "repository": { "type": "git", "url": "https://github.com/zhouyoukang/windsurf-assistant.git" },
   "homepage": "https://github.com/zhouyoukang/windsurf-assistant",

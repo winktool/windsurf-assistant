@@ -1,5 +1,79 @@
 # Changelog
 
+## v17.37.0 · 道法自然 · 四处持久化缺失修复 · 各安其位
+
+### 真根承 v17.36 (纯切号归位后深审)
+
+v17.36 剥离 origin 层后, WAM 回归纯切号本体. 深审核心切号链路发现 **四处持久化缺失**:
+
+1. **`doAutoRotate` 切号成功后不落盘**: `_store.activeIndex = bestI; _store.switchCount++` 后无 `_store.save()` — 重启丢失切号状态
+2. **`panicSwitch` 紧急切换后不落盘**: 同上 — 紧急切换后 Reload Window 回到旧号
+3. **`switchAccount` (webview 手动切) 后不落盘**: `case "switch"` 分支 `_store.activeIndex = msg.index` 后无 save
+4. **代码中残存 `_saveStore()` 调用**: 旧 v17.35 遗留的函数名, 实际应为 `_store.save()` — 若残存则 ReferenceError 静默吞
+
+### 损 (为道日损 · 最小补)
+
+| 位置 | 改动 |
+|------|------|
+| `@extension.js:400` | `WAM_VERSION = "17.37.0"` |
+| `@extension.js` doAutoRotate 成功分支 | 补 `_store.save()` |
+| `@extension.js` panicSwitch 成功分支 | 补 `_store.save()` |
+| `@extension.js` case "switch" 成功分支 | 补 `_store.save()` |
+| `@extension.js` 全文 | `_saveStore()` → `_store.save()` (若有残存) |
+| `@bundled-origin/VERSION:1` | `17.36.0` → `17.37.0` (E2E L10 对齐) |
+
+### 本源之理
+
+**功遂身退**: 四处补全皆单行 `_store.save()`, 不改架构不改流程. 切号成功 → 落盘 → 重启不丢. 此即"为而不恃, 功成而弗居".
+
+---
+
+## v17.36.0 · 道法自然 · Origin 剥离 · WAM 归本位 · 各得其序
+
+### 人法地 · 地法天 · 天法道 · 道法自然
+
+v17.21 "二核合一" 将切号 + 道Agent 合入同一 VSIX. 经 15 版迭代 (v17.22→v17.35), 两核耦合渐深:
+- origin 层 (proxy/anchor/SP注入) 占 extension.js 约 40% 代码量
+- origin 配置项 (wam.origin.*) 占 package.json 8 项
+- origin 命令 (wam.originInvert/wam.originPassthrough/wam.verifyEndToEnd) 3 个
+- 切号本体与 origin 生命周期交织 (activate/deactivate 皆触 proxy spawn/kill)
+
+**各得其序**: 切号是切号, 道Agent 是道Agent. 混则乱, 分则治.
+
+### 剥离清单
+
+| 去 (从 WAM 移除) | 归 (移至 020-道VSIX_DaoAgi) |
+|---|---|
+| `OriginCtl` 全模块 (spawn/kill/anchor/ensure/status) | dao-agi 独立 VSIX |
+| `_origFindNode` / `_origFindDir` / `_origKillByPort` | dao-agi extension.js |
+| `_origHealCodeiumPatch` / `_origDetectSystemProxy` | dao-agi |
+| `wam.originInvert` / `wam.originPassthrough` 命令 | dao-agi 命令 |
+| `wam.verifyEndToEnd` (E2E 十层自检) | dao-agi E2E |
+| `wam.origin.*` 8 项配置 | dao-agi package.json |
+| `bundled-origin/` 内嵌资源自解压逻辑 | dao-agi 内嵌 |
+| webview setOrigin/setCombo 之 origin 分支 | dao-agi webview |
+
+### 保留 (WAM 纯切号本体)
+
+- 全部切号引擎: Firebase/Devin 双身份, 账号池, 额度监测, 消息锚定, 智能轮转
+- Chromium 原生桥 (网络层)
+- Token Pool 预热, 自适应运行时 (_adaptive)
+- 自动更新 (autoUpdate)
+- 写盘诊断, 自诊断
+- Webview 管理面板 (切号专用, 去 origin 控制区)
+
+### 向后兼容
+
+- `wam.originInvert` / `wam.originPassthrough` / `wam.verifyEndToEnd` 命令**保留注册** → 提示"已移至 020-道VSIX_DaoAgi"
+- `wam._origin_removed` 弃用标记 → settings.json 迁移提示
+- `setOrigin` / `setCombo` webview 消息 → 提示已剥离
+
+### 本源之理
+
+**大制不割**: 不是删除 origin, 是各归其位. WAM 为器 (切号), dao-agi 为道 (SP注入). 器各安位, 道各循序. 圣人之道, 为而不争.
+
+---
+
 ## v17.35.0 · 道法自然 · Devin 迁移全面适配 · fetchQuota 从底层打通
 
 ### 真根承 v17.34 (Firebase idToken 被 "migrated" 拒绝)
