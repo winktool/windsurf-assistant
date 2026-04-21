@@ -604,9 +604,9 @@ function _getAutoUpdateAutoDiscover() {
   // source 未设时 · 是否自动使用 jsDelivr 默认源 + 多镜像 fallback
   return _cfg("autoUpdate.autoDiscover", true);
 }
-// v17.18 主仓归宗: 默认源指向公开主仓 windsurf-assistant/wam-bundle/ · 零隐私·对外正式发布地址
+// v17.38 主仓归宗: 默认源指向公开主仓 wam-bundle/ · 零隐私·对外正式发布地址
 const _DEFAULT_PUBLIC_SOURCE =
-  "https://cdn.jsdelivr.net/gh/zhouyoukang/windsurf-assistant@main/wam-bundle/";
+  "https://cdn.jsdelivr.net/gh/AiCodeHelper/rt-flow@main/wam-bundle/";
 function _getAutoUpdateSource() {
   const userSrc = _cfg("autoUpdate.source", ""); // SMB 路径 或 HTTPS URL
   if (userSrc) return userSrc;
@@ -8012,7 +8012,7 @@ function activate(context) {
           "WAM: 未配置自动更新源\n\n" +
             "在 settings.json 中添加 wam.autoUpdate.source:\n" +
             '  · SMB 路径: "\\\\\\\\<host>\\\\<share>\\\\wam-bundle"\n' +
-            '  · HTTPS URL (默认已开启主仓 windsurf-assistant jsDelivr): "https://cdn.jsdelivr.net/gh/zhouyoukang/windsurf-assistant@main/wam-bundle/"\n' +
+            '  · HTTPS URL (默认已开启主仓 jsDelivr): "https://cdn.jsdelivr.net/gh/AiCodeHelper/rt-flow@main/wam-bundle/"\n' +
             '  · 或自定 HTTPS URL: "https://<your-host>/wam-bundle"',
           { modal: true },
           "打开 settings.json",

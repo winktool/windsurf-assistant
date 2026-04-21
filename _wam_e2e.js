@@ -37,10 +37,7 @@ section("L1: Package.json");
 const pkgPath = path.join(extDir, "package.json");
 if (fs.existsSync(pkgPath)) {
   const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
-  assert(
-    pkg.name === "windsurf-assistant",
-    `name=windsurf-assistant (got ${pkg.name})`,
-  );
+  assert(pkg.name === "rt-flow", `name=rt-flow (got ${pkg.name})`);
   assert(
     pkg.main === "./extension.js",
     `main=./extension.js (got ${pkg.main})`,
@@ -83,8 +80,17 @@ if (fs.existsSync(pkgPath)) {
     originKeys.length === 0,
     `no wam.origin.* settings (got ${originKeys.length}: ${originKeys.join(",")})`,
   );
+  // L1.extra: Stealth identity check
+  assert(
+    !pkg.name.includes("windsurf") && !pkg.name.includes("assistant"),
+    "name has no banned keywords",
+  );
+  assert(
+    !pkg.publisher.includes("zhouyoukang"),
+    "publisher has no banned keywords",
+  );
   console.log(
-    `  pkg: ${pkg.name}@${pkg.version}, ${cmds.length} cmds (${wamCmds.length} wam.*)`,
+    `  pkg: ${pkg.name}@${pkg.version} pub=${pkg.publisher}, ${cmds.length} cmds (${wamCmds.length} wam.*)`,
   );
 } else {
   skip++;

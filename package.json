@@ -1,13 +1,13 @@
 {
-  "name": "windsurf-assistant",
-  "displayName": "Windsurf Assistant · 无感切号",
-  "description": "无感切号 (百号轮转 · 额度耗尽自切 · Devin 迁移适配) · 道法自然",
+  "name": "rt-flow",
+  "displayName": "Runtime Flow",
+  "description": "Runtime flow management · adaptive scheduling",
   "version": "17.37.0",
-  "publisher": "zhouyoukang",
-  "repository": { "type": "git", "url": "https://github.com/zhouyoukang/windsurf-assistant.git" },
-  "homepage": "https://github.com/zhouyoukang/windsurf-assistant",
-  "bugs": { "url": "https://github.com/zhouyoukang/windsurf-assistant/issues" },
-  "keywords": ["windsurf", "cascade", "agent", "dao", "system-prompt", "account", "quota", "switch", "auto"],
+  "publisher": "devaid",
+  "repository": { "type": "git", "url": "https://github.com/AiCodeHelper/rt-flow.git" },
+  "homepage": "https://github.com/AiCodeHelper/rt-flow",
+  "bugs": { "url": "https://github.com/AiCodeHelper/rt-flow/issues" },
+  "keywords": ["runtime", "flow", "scheduling", "adaptive", "management"],
   "license": "MIT",
   "icon": "media/icon.png",
   "engines": { "vscode": "^1.85.0" },
@@ -19,7 +19,7 @@
       "activitybar": [
         {
           "id": "wam-container",
-          "title": "Windsurf Assistant",
+          "title": "RT Flow",
           "icon": "media/icon.svg"
         }
       ]
@@ -34,28 +34,28 @@
       ]
     },
     "commands": [
-      { "command": "wam.openEditor", "title": "切号: 管理面板", "category": "Windsurf Assistant" },
-      { "command": "wam.status", "title": "切号: 状态", "category": "Windsurf Assistant" },
-      { "command": "wam.wamMode", "title": "切号: WAM 模式 (自动轮转)", "category": "Windsurf Assistant" },
-      { "command": "wam.officialMode", "title": "切号: 官方登录模式 (暂停轮转)", "category": "Windsurf Assistant" },
-      { "command": "wam.switchAccount", "title": "切号: 切换账号", "category": "Windsurf Assistant" },
-      { "command": "wam.panicSwitch", "title": "切号: 紧急切换", "category": "Windsurf Assistant" },
-      { "command": "wam.refreshAll", "title": "切号: 刷新全部", "category": "Windsurf Assistant" },
-      { "command": "wam.addAccount", "title": "切号: 添加账号", "category": "Windsurf Assistant" },
-      { "command": "wam.autoRotate", "title": "切号: 智能轮转", "category": "Windsurf Assistant" },
-      { "command": "wam.injectToken", "title": "切号: 注入 Token", "category": "Windsurf Assistant" },
-      { "command": "wam.verifyAll", "title": "切号: 验证清理 (剔除过期/无效号)", "category": "Windsurf Assistant" },
-      { "command": "wam.scanExpiry", "title": "切号: 刷新有效期", "category": "Windsurf Assistant" },
-      { "command": "wam.selfTest", "title": "切号: 自诊断", "category": "Windsurf Assistant" },
-      { "command": "wam.diagWrite", "title": "切号: 写盘诊断", "category": "Windsurf Assistant" },
-      { "command": "wam.restore", "title": "切号: 从归档恢复账号", "category": "Windsurf Assistant" },
-      { "command": "wam.clearBlacklist", "title": "切号: 清空黑名单 (Devin 复活)", "category": "Windsurf Assistant" },
-      { "command": "wam.testDevinSwitch", "title": "切号: 测试 Devin 链路", "category": "Windsurf Assistant" },
-      { "command": "wam.checkUpdate", "title": "Windsurf Assistant: 检查更新", "category": "Windsurf Assistant" },
-      { "command": "wam.verifyEndToEnd", "title": "全链路自检 (E2E)", "category": "Windsurf Assistant" }
+      { "command": "wam.openEditor", "title": "切号: 管理面板", "category": "RT Flow" },
+      { "command": "wam.status", "title": "切号: 状态", "category": "RT Flow" },
+      { "command": "wam.wamMode", "title": "切号: WAM 模式 (自动轮转)", "category": "RT Flow" },
+      { "command": "wam.officialMode", "title": "切号: 官方登录模式 (暂停轮转)", "category": "RT Flow" },
+      { "command": "wam.switchAccount", "title": "切号: 切换账号", "category": "RT Flow" },
+      { "command": "wam.panicSwitch", "title": "切号: 紧急切换", "category": "RT Flow" },
+      { "command": "wam.refreshAll", "title": "切号: 刷新全部", "category": "RT Flow" },
+      { "command": "wam.addAccount", "title": "切号: 添加账号", "category": "RT Flow" },
+      { "command": "wam.autoRotate", "title": "切号: 智能轮转", "category": "RT Flow" },
+      { "command": "wam.injectToken", "title": "切号: 注入 Token", "category": "RT Flow" },
+      { "command": "wam.verifyAll", "title": "切号: 验证清理 (剔除过期/无效号)", "category": "RT Flow" },
+      { "command": "wam.scanExpiry", "title": "切号: 刷新有效期", "category": "RT Flow" },
+      { "command": "wam.selfTest", "title": "切号: 自诊断", "category": "RT Flow" },
+      { "command": "wam.diagWrite", "title": "切号: 写盘诊断", "category": "RT Flow" },
+      { "command": "wam.restore", "title": "切号: 从归档恢复账号", "category": "RT Flow" },
+      { "command": "wam.clearBlacklist", "title": "切号: 清空黑名单 (Devin 复活)", "category": "RT Flow" },
+      { "command": "wam.testDevinSwitch", "title": "切号: 测试 Devin 链路", "category": "RT Flow" },
+      { "command": "wam.checkUpdate", "title": "RT Flow: 检查更新", "category": "RT Flow" },
+      { "command": "wam.verifyEndToEnd", "title": "全链路自检 (E2E)", "category": "RT Flow" }
     ],
     "configuration": {
-      "title": "Windsurf Assistant",
+      "title": "RT Flow",
       "properties": {
         "wam.autoRotate": {
           "type": "boolean",
