@@ -1,17 +1,8 @@
-# Windsurf Assistant · 道法自然 · VSIX 内仅六器
+# Windsurf Assistant · v17.36 · WAM 纯切号 · bundled-origin 已剥离
 **
 !package.json
 !README.md
 !CHANGELOG.md
 !LICENSE
 !extension.js
-!bundled-origin/VERSION
-!bundled-origin/*.js
-!bundled-origin/*.py
-!bundled-origin/*.txt
 !media/**
-
-# 排除 Python 缓存 (锚.py 编译后的字节码, 不应入包)
-**/__pycache__/**
-**/*.pyc
-**/*.pyo
