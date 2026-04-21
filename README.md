@@ -41,9 +41,7 @@ Cascade 官方系统提示里塞了什么?
 
 **16 侧信道标记**: communication_style / tool_calling / making_code_changes / running_commands / user_rules / user_information / workspace_information / skills / workflows / memories / memory_system / MEMORY[ / ide_metadata / Bug fixing discipline / Long-horizon workflow / Planning cadence — 任一命中即整体置换.
 
-**热切 1-3ms**: 点按钮 → POST `/origin/mode` → proxy 原地切模式 · 进程复用 · 无需 Reload Window.
-
-**bundled 自足**: VSIX 内嵌 `bundled-origin/` (源.js + 锚.py + 道德经 + VERSION). 首次点 ☯ 道Agent 自解压到 `~/.wam-hot/origin/`, 任何电脑装即用.
+**v17.36 剥离**: 道Agent proxy 已独立为姊妹插件 `020-道VSIX_DaoAgi`. 本仓专注 WAM 无感切号.
 
 ---
 
@@ -85,28 +83,28 @@ Cascade 官方系统提示里塞了什么?
 
 ---
 
-## 五 · 架构 (一看便知)
+## 五 · 架构 (唯变所适 · v17.41)
 
 ```text
 ┌──────────────────────────────────────────┐
-│ Windsurf Cascade  (client, 无改动)        │
+│ Windsurf / Cursor / VSCode  (client)      │
 └─────────────┬────────────────────────────┘
-              │  anchors: inference → 127.0.0.1:8889
+              │ extension.js (纯 WAM · 零外部依赖)
               ▼
 ┌──────────────────────────────────────────┐
-│ 道Agent proxy (~/.wam-hot/origin/源.js)   │
-│  - 三路径 SP 侦测                         │
-│  - invert: 替为道德经                     │
-│  - passthrough: 零改写                    │
-│  - /origin/mode POST 热切                 │
+│ 无感切号 WAM                              │
+│  - 消息锚定: 五路探针 · 对话发送即切号     │
+│  - 双身份: Firebase + Devin 自动探测切换   │
+│  - Chromium 原生桥 > 系统代理 > 直连       │
+│  - WAM_DIR: env/config/默认 ~/.wam-hot    │
+│  - 端点/端口/模型: 全 wam.* 可配          │
 └─────────────┬────────────────────────────┘
-              │  透传到官方
+              │ 直连官方 (零中继)
               ▼
-        inference.codeium.com
+        server.codeium.com / windsurf.com
 ```
 
-- **锚.py** — DPAPI/SQLite 三重锚, 把 Cascade 的 inference endpoint 改写为本机 proxy
-- **源.js** — 纯 Node · 无依赖 · 仅解析 Connect-RPC 协议里的 `ChatMessage` 并置换 SP
+**零硬编码**: 路径/端口/端点/模型名全部可通过 `wam.*` 设置或环境变量覆盖 — 适配万千公网用户各类环境
 
 ---
 

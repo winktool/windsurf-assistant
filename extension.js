@@ -3,8 +3,9 @@
 // ─ 五感原则 ─ 切号绝不调用 windsurf.logout · 绝不重启 extension host · 绝不写 state.vscdb
 // ─ 锚本源 ─ Chromium 原生桥 > 系统代理感知 > 直连 > 动态端口 (末路兜底)
 // ─ 双身份 ─ Firebase (主) · Devin (/_devin-auth/ · 新号) 自动探测切换
-// ─ v17.20 ─ 本源内嵌自解压: bundled-origin/ 封入 VSIX, 首启解压到 ~/.wam-hot/origin, 任何电脑装即用
-// 详细迭代历史见 git log (v15~v17.20 凡 50+ 代 · 为学日益已化为 git 考古, 源码去芜留菁)
+// ─ v17.36 ─ origin/proxy 功能已剥离至独立插件 · 本源纯 WAM 切号
+// ─ v17.41 ─ 唯变所适: WAM_DIR 支持 env WAM_HOT_DIR + wam.wamHotDir 覆盖 · 默认 ~/.wam-hot
+// 详细迭代历史见 git log (v15~v17.41 凡 60+ 代 · 为学日益已化为 git 考古, 源码去芜留菁)
 const vscode = require("vscode");
 const crypto = require("crypto");
 const https = require("https");
@@ -345,11 +346,22 @@ const _DEFAULT_PLAN_STATUS_URLS = [
   "https://register.windsurf.com/exa.seat_management_pb.SeatManagementService/GetPlanStatus",
 ];
 // v16: Claude可用性地检 — RegisterUser + CheckChatCapacity (唯一可靠的Claude访问权验证)
-const _REGISTER_URL =
-  "https://server.codeium.com/exa.seat_management_pb.SeatManagementService/RegisterUser";
-const _CHAT_CAPACITY_URL =
-  "https://server.codeium.com/exa.language_server_pb.LanguageServerService/CheckChatCapacity";
-const _CLAUDE_PROBE_MODEL = "claude-sonnet-4-6"; // 探测用模型: pro_trial可用, free不可用
+// v17.41 唯变所适: 端点与模型全可配 · 适配公网万千环境
+function _getRegisterUrl() {
+  return _cfg(
+    "registerUrl",
+    "https://server.codeium.com/exa.seat_management_pb.SeatManagementService/RegisterUser",
+  );
+}
+function _getChatCapacityUrl() {
+  return _cfg(
+    "chatCapacityUrl",
+    "https://server.codeium.com/exa.language_server_pb.LanguageServerService/CheckChatCapacity",
+  );
+}
+function _getClaudeProbeModel() {
+  return _cfg("claudeProbeModel", "claude-sonnet-4-6");
+}
 function _getOfficialPlanStatusUrls() {
   // 道法自然: planStatusUrls完全替换, officialEndpoints追加扩展
   const override = _cfg("planStatusUrls", []);
@@ -387,17 +399,40 @@ function _getRelayHost() {
   return host;
 }
 
-const WAM_DIR = path.join(os.homedir(), ".wam-hot");
-const TOKEN_FILE = path.join(WAM_DIR, "oneshot_token.json");
-const RESULT_FILE = path.join(WAM_DIR, "inject_result.json");
-const LOG_FILE = path.join(WAM_DIR, "wam.log");
-const SNAPSHOT_FILE = path.join(WAM_DIR, "quota_snapshots.json");
-const INUSE_FILE = path.join(WAM_DIR, "inuse_marks.json");
-const RELOAD_SIGNAL = path.join(WAM_DIR, "_reload_signal");
-const RELOAD_READY = path.join(WAM_DIR, "_reload_ready");
+// ── WAM_DIR 可配化: env WAM_HOT_DIR > wam.wamHotDir > 默认 ~/.wam-hot ──
+function _resolveWamDir() {
+  if (process.env.WAM_HOT_DIR) return process.env.WAM_HOT_DIR;
+  try {
+    const cfgDir = vscode.workspace
+      .getConfiguration("wam")
+      .get("wamHotDir", "");
+    if (cfgDir) return cfgDir;
+  } catch {}
+  return path.join(os.homedir(), ".wam-hot");
+}
+let WAM_DIR = path.join(os.homedir(), ".wam-hot"); // 模块加载默认值 · activate() 时 _resolveWamDir() 重新解析
+function _deriveWamPaths() {
+  TOKEN_FILE = path.join(WAM_DIR, "oneshot_token.json");
+  RESULT_FILE = path.join(WAM_DIR, "inject_result.json");
+  LOG_FILE = path.join(WAM_DIR, "wam.log");
+  SNAPSHOT_FILE = path.join(WAM_DIR, "quota_snapshots.json");
+  INUSE_FILE = path.join(WAM_DIR, "inuse_marks.json");
+  RELOAD_SIGNAL = path.join(WAM_DIR, "_reload_signal");
+  RELOAD_READY = path.join(WAM_DIR, "_reload_ready");
+  MODE_FILE = path.join(WAM_DIR, "wam_mode.json");
+  INSTANCE_LOCK_FILE = path.join(WAM_DIR, "instance_claims.json");
+  TOKEN_CACHE_FILE = path.join(WAM_DIR, "_token_cache.json");
+}
+let TOKEN_FILE = path.join(WAM_DIR, "oneshot_token.json");
+let RESULT_FILE = path.join(WAM_DIR, "inject_result.json");
+let LOG_FILE = path.join(WAM_DIR, "wam.log");
+let SNAPSHOT_FILE = path.join(WAM_DIR, "quota_snapshots.json");
+let INUSE_FILE = path.join(WAM_DIR, "inuse_marks.json");
+let RELOAD_SIGNAL = path.join(WAM_DIR, "_reload_signal");
+let RELOAD_READY = path.join(WAM_DIR, "_reload_ready");
 // TRIAL_MAX_DAYS已移除 — 官方Trial是14天(非90天), 且过期后仍有配额, 不再用时间猜测过期
 // PURGE_INTERVAL_MS → _getPurgeIntervalMs() (v17.1 getter化)
-const WAM_VERSION = "17.40.0"; // v17.40.0: 万法归宗 · Devin-first 直连本源 + 持久化根治 + firebase 超时 race · 跳过 16s Firebase 超时 (反者道之动 · 损之又损)
+const WAM_VERSION = "17.41.0"; // v17.41.0: 唯变所适 · 去除一切硬路径硬端口硬编码 · WAM_DIR/端点/模型全可配 · 适配万千公网用户环境 (道法自然 · 柔弱胜刚强)
 
 let _store = null;
 let _sidebarProvider = null;
@@ -418,7 +453,7 @@ let _pollTimer = null;
 let _purgeRunning = false;
 let _lastPurgeTime = 0;
 let _mode = "wam"; // 'wam' = 切号模式 | 'official' = 官方登录模式
-const MODE_FILE = path.join(WAM_DIR, "wam_mode.json");
+let MODE_FILE = path.join(WAM_DIR, "wam_mode.json");
 
 // v17.36 · 反者道之动 · proxy/origin 状态变量已剥离 · WAM 纯切号
 
@@ -991,11 +1026,11 @@ function _getAutoUpdateNotifyUser() {
   return _cfg("autoUpdate.notifyUser", false); // 默认静默 · 太上不知有之
 }
 
-const INSTANCE_LOCK_FILE = path.join(WAM_DIR, "instance_claims.json");
+let INSTANCE_LOCK_FILE = path.join(WAM_DIR, "instance_claims.json");
 
 let _quotaSnapshots = new Map(); // email -> {daily, weekly, ts}
 let _tokenCache = new Map(); // email -> {idToken, expiresAt}
-const TOKEN_CACHE_FILE = path.join(WAM_DIR, "_token_cache.json"); // v13.1: 持久化
+let TOKEN_CACHE_FILE = path.join(WAM_DIR, "_token_cache.json"); // v13.1: 持久化
 let _tokenCacheDirty = false; // 标记是否需要落盘
 let _monitorTimer = null;
 let _scanTimer = null;
@@ -3511,12 +3546,22 @@ function _getDevinLoginUrl() {
     "https://windsurf.com/_devin-auth/password/login",
   );
 }
+// v17.41 唯变所适: Referer/Origin 从端点 URL 自动推导 · 零硬编码域名
+function _deriveOrigin(urlStr) {
+  try {
+    const u = new URL(urlStr);
+    return u.origin;
+  } catch {
+    return "https://windsurf.com";
+  }
+}
 async function _devinLogin(email, password) {
   const url = _getDevinLoginUrl();
+  const urlOrigin = _deriveOrigin(url);
   const payload = JSON.stringify({ email, password });
   const headers = {
     "Content-Type": "application/json",
-    Referer: "https://windsurf.com/account/login",
+    Referer: `${urlOrigin}/account/login`,
   };
   // 复用 Firebase 三通道架构: native > proxy > direct
   const channels = [
@@ -3607,13 +3652,14 @@ function _getWindsurfPostAuthUrl() {
 
 async function _devinPostAuth(auth1Token, orgId) {
   const url = _getWindsurfPostAuthUrl();
+  const urlOrigin = _deriveOrigin(url);
   const bodyObj = { auth1_token: auth1Token };
   if (orgId) bodyObj.org_id = orgId;
   const payload = JSON.stringify(bodyObj);
   const headers = {
     "Content-Type": "application/json",
-    Origin: "https://windsurf.com",
-    Referer: "https://windsurf.com/profile",
+    Origin: urlOrigin,
+    Referer: `${urlOrigin}/profile`,
   };
   const channels = [
     async () => {
@@ -4507,14 +4553,14 @@ async function firebaseLookup(idToken) {
 async function _registerUser(idToken) {
   const body = encodeProtoString(idToken); // field 1 = idToken
   const channels = [
-    () => _httpsPostRaw(_REGISTER_URL, body, { timeout: 10000 }),
+    () => _httpsPostRaw(_getRegisterUrl(), body, { timeout: 10000 }),
     async () => {
       const proxy = await _detectProxy();
       if (!proxy) throw new Error("no_proxy");
       return _httpsPostRawViaProxy(
         proxy.host,
         proxy.port,
-        _REGISTER_URL,
+        _getRegisterUrl(),
         body,
         10000,
       );
@@ -4558,17 +4604,17 @@ async function _checkClaudeCapacity(apiKey) {
   const metaBytes = _encField(1, apiKey); // metadata.field1 = apiKey
   const body = Buffer.concat([
     _encField(1, metaBytes),
-    _encField(2, _CLAUDE_PROBE_MODEL),
+    _encField(2, _getClaudeProbeModel()),
   ]);
   const channels = [
-    () => _httpsPostRaw(_CHAT_CAPACITY_URL, body, { timeout: 8000 }),
+    () => _httpsPostRaw(_getChatCapacityUrl(), body, { timeout: 8000 }),
     async () => {
       const proxy = await _detectProxy();
       if (!proxy) throw new Error("no_proxy");
       return _httpsPostRawViaProxy(
         proxy.host,
         proxy.port,
-        _CHAT_CAPACITY_URL,
+        _getChatCapacityUrl(),
         body,
         8000,
       );
@@ -4769,7 +4815,7 @@ async function verifyAndPurgeExpired(store, opts = {}) {
                   if (!claudeOk) {
                     toRemoveIndices.push(i);
                     reasons[i] =
-                      `claude_no_capacity: ${_CLAUDE_PROBE_MODEL}不可用(${capResult.message || "no_capacity"}), plan=${freshPlan} D${quota.daily}W${quota.weekly}`;
+                      `claude_no_capacity: ${_getClaudeProbeModel()}不可用(${capResult.message || "no_capacity"}), plan=${freshPlan} D${quota.daily}W${quota.weekly}`;
                     log(
                       `purge: ${acc.email} → NO_CLAUDE (capacity=false: ${capResult.message}), plan=${freshPlan} D${quota.daily}W${quota.weekly}`,
                     );
@@ -7933,6 +7979,9 @@ function activate(context) {
   // \u9053\u6cd5\u81ea\u7136: \u52a8\u6001\u521d\u59cb\u5316\u4ea7\u54c1\u540d\u548c\u6570\u636e\u76ee\u5f55
   PRODUCT_NAME = _detectProductName();
   DATA_DIR = _resolveDataDir(PRODUCT_NAME);
+  // v17.41 唯变所适: WAM_DIR 动态解析 · 派生路径随之更新
+  WAM_DIR = _resolveWamDir();
+  _deriveWamPaths();
   log(
     `activate v${WAM_VERSION}-\u9053\u6cd5\u81ea\u7136 — inst=${_instanceId} product=${PRODUCT_NAME} dataDir=${DATA_DIR} \u7edf\u4e00\u4ee3\u7406\u63cf\u8ff0\u7b26\u00b7\u96f6\u786e\u5b9a\u672c\u6e90`,
   );

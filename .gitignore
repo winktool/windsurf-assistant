@@ -45,7 +45,5 @@ LOCAL_MAPPING.md
 
 # ═══ 但 VSIX 必需资源要入库 ═══
 !extension.js
-!bundled-origin/
-!bundled-origin/**
 !media/
 !media/**

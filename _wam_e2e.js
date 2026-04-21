@@ -1,5 +1,5 @@
 /**
- * WAM · rt-flow E2E test · v17.40.0 · 道法自然 · Devin-first 万法归宗
+ * WAM · rt-flow E2E test · v17.41.0 · 唯变所适 · 去除一切硬路径硬端口硬编码
  * Offline static analysis — validates source integrity without runtime
  * Usage: node _wam_e2e.js [extDir]
  */
@@ -42,7 +42,7 @@ if (fs.existsSync(pkgPath)) {
     pkg.main === "./extension.js",
     `main=./extension.js (got ${pkg.main})`,
   );
-  assert(pkg.version === "17.40.0", `version=17.40.0 (got ${pkg.version})`);
+  assert(pkg.version === "17.41.0", `version=17.41.0 (got ${pkg.version})`);
   assert(pkg.engines && pkg.engines.vscode, "engines.vscode defined");
   assert(
     pkg.activationEvents && pkg.activationEvents.includes("onStartupFinished"),
@@ -102,7 +102,7 @@ section("L2: WAM_VERSION alignment");
 const verMatch = code.match(/WAM_VERSION\s*=\s*"([^"]+)"/);
 assert(verMatch, "WAM_VERSION constant exists");
 if (verMatch) {
-  assert(verMatch[1] === "17.40.0", `WAM_VERSION=17.40.0 (got ${verMatch[1]})`);
+  assert(verMatch[1] === "17.41.0", `WAM_VERSION=17.41.0 (got ${verMatch[1]})`);
 }
 
 // ══ L3: Core classes & functions ══
@@ -200,24 +200,15 @@ assert(
   "origin removal notice present",
 );
 
-// ══ L10: bundled-origin/VERSION alignment ══
-section("L10: bundled-origin/VERSION");
+// ══ L10: bundled-origin 已删除 (v17.41 损之又损) ══
+section("L10: bundled-origin removed (v17.41)");
 const verFile = path.join(extDir, "bundled-origin", "VERSION");
-if (fs.existsSync(verFile)) {
-  const verContent = fs.readFileSync(verFile, "utf8").trim();
-  const bundledVer = verContent.split("\n")[0].trim();
-  assert(
-    ["17.40.0", "17.39.0", "17.37.0"].includes(bundledVer),
-    `bundled-origin/VERSION=17.40.0|17.39.0|17.37.0 (got ${bundledVer})`,
-  );
-} else {
-  // After v17.36 origin stripping, bundled-origin may or may not be in VSIX
-  // But in _github_src it should still exist for reference
-  skip++;
-  console.log(
-    "  SKIP: bundled-origin/VERSION not found (may be stripped in VSIX)",
-  );
-}
+assert(
+  !fs.existsSync(verFile),
+  "bundled-origin/VERSION 已删除 (v17.41 死代码清理)",
+);
+const bundledDir = path.join(extDir, "bundled-origin");
+assert(!fs.existsSync(bundledDir), "bundled-origin/ 目录已删除");
 
 // ══ L11: .vscodeignore (VSIX content control) ══
 section("L11: .vscodeignore");
@@ -468,10 +459,77 @@ if (fs.existsSync(pkgPath)) {
   );
 }
 
+// ══ L17: v17.41 唯变所适 · 去除硬路径硬端口硬编码 ══
+section("L17: 唯变所适 (v17.41 · 道法自然)");
+assert(code.includes("_resolveWamDir"), "_resolveWamDir 动态解析 WAM_DIR");
+assert(code.includes("WAM_HOT_DIR"), "env WAM_HOT_DIR 支持");
+assert(code.includes("_deriveWamPaths"), "_deriveWamPaths 派生路径函数");
+assert(code.includes("_deriveOrigin"), "_deriveOrigin URL origin 自动推导");
+assert(code.includes("_getRegisterUrl"), "_getRegisterUrl 可配化");
+assert(code.includes("_getChatCapacityUrl"), "_getChatCapacityUrl 可配化");
+assert(code.includes("_getClaudeProbeModel"), "_getClaudeProbeModel 可配化");
+assert(code.includes("_getDevinLoginUrl"), "_getDevinLoginUrl 可配化");
+assert(
+  code.includes("_getWindsurfPostAuthUrl"),
+  "_getWindsurfPostAuthUrl 可配化",
+);
+assert(
+  code.includes("_getOfficialPlanStatusUrls"),
+  "_getOfficialPlanStatusUrls 可配化",
+);
+assert(
+  code.includes("_getFallbackScanPorts"),
+  "_getFallbackScanPorts 可配化端口扫描",
+);
+assert(code.includes("_getGatewayPorts"), "_getGatewayPorts 可配化网关端口");
+assert(code.includes("_getFirebaseKeys"), "_getFirebaseKeys 可配化");
+assert(code.includes("_getFirebaseReferer"), "_getFirebaseReferer 可配化");
+assert(code.includes("_getFirebaseHost"), "_getFirebaseHost 可配化");
+// WAM_DIR 必须是 let (不是 const) — 支持 activate() 时重赋值
+assert(/^let WAM_DIR/m.test(code), "WAM_DIR 声明为 let (可重赋值)");
+// package.json cross-check v17.41 新配置
+if (fs.existsSync(pkgPath)) {
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+  const props =
+    (pkg.contributes &&
+      pkg.contributes.configuration &&
+      pkg.contributes.configuration.properties) ||
+    {};
+  assert(props["wam.wamHotDir"], "wam.wamHotDir 在 package.json");
+  assert(props["wam.claudeProbeModel"], "wam.claudeProbeModel 在 package.json");
+  assert(props["wam.devin.loginUrl"], "wam.devin.loginUrl 在 package.json");
+  assert(
+    props["wam.devin.postAuthUrl"],
+    "wam.devin.postAuthUrl 在 package.json",
+  );
+  assert(props["wam.registerUrl"], "wam.registerUrl 在 package.json");
+  assert(props["wam.chatCapacityUrl"], "wam.chatCapacityUrl 在 package.json");
+  assert(props["wam.planStatusUrls"], "wam.planStatusUrls 在 package.json");
+  assert(props["wam.proxy.scanPorts"], "wam.proxy.scanPorts 在 package.json");
+  assert(
+    props["wam.proxy.gatewayPorts"],
+    "wam.proxy.gatewayPorts 在 package.json",
+  );
+}
+// 无残余硬编码常量 (const 版本应已被替换)
+assert(
+  !code.includes("const _REGISTER_URL"),
+  "_REGISTER_URL 不再是 const (已 getter 化)",
+);
+assert(
+  !code.includes("const _CHAT_CAPACITY_URL"),
+  "_CHAT_CAPACITY_URL 不再是 const (已 getter 化)",
+);
+assert(
+  !code.includes("const _CLAUDE_PROBE_MODEL"),
+  "_CLAUDE_PROBE_MODEL 不再是 const (已 getter 化)",
+);
+assert(!code.includes("const WAM_DIR"), "WAM_DIR 不再是 const (可动态赋值)");
+
 // ══ Summary ══
 console.log(`\n${"=".repeat(60)}`);
 console.log(
-  `WAM E2E v17.40.0 · RESULT: ${pass} pass / ${fail} fail / ${skip} skip`,
+  `WAM E2E v17.41.0 · RESULT: ${pass} pass / ${fail} fail / ${skip} skip`,
 );
 console.log(`STATUS: ${fail === 0 ? "✅ ALL GREEN" : "❌ FAILURES DETECTED"}`);
 process.exit(fail > 0 ? 1 : 0);
