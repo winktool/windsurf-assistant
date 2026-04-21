@@ -397,7 +397,7 @@ const RELOAD_SIGNAL = path.join(WAM_DIR, "_reload_signal");
 const RELOAD_READY = path.join(WAM_DIR, "_reload_ready");
 // TRIAL_MAX_DAYS已移除 — 官方Trial是14天(非90天), 且过期后仍有配额, 不再用时间猜测过期
 // PURGE_INTERVAL_MS → _getPurgeIntervalMs() (v17.1 getter化)
-const WAM_VERSION = "17.35.0"; // v17.34.0: 道法自然 · 账号池认证补齐 · fetchAccountQuota 三通道 (native/proxy/direct) headers 加 Authorization: Bearer ${authToken} · 消除 ch1/ch2/ch3 all_official_*_failed · 账号池 plan null → 真 plan · 179 之"回弹" 深层补余 · 无为而无不为
+const WAM_VERSION = "17.35.0"; // v17.35.0: Devin 迁移全面适配 · 已知 Devin 账号直走 _devinFullSwitch · Firebase 失败无条件 Devin fallback · GetPlanStatus 401 migrated 自动标记 · _origHealCodeiumPatch 动态路径发现 · 道法自然
 
 let _store = null;
 let _sidebarProvider = null;
@@ -8914,11 +8914,29 @@ function _origLog(msg) {
 //   activate 时自动 check · 若原始行还在 (未 patch) · 重打 · 防脆弱
 function _origHealCodeiumPatch() {
   try {
-    const candidates = [
+    // v17.35 · 道法自然 · 动态路径发现 · process.execPath 即本源
+    //   process.execPath = "X:\...\Windsurf.exe" → 向上找 resources\app\extensions\windsurf\dist\extension.js
+    //   兜底: 硬编码候选 (覆盖 E/C/D 标准安装)
+    const candidates = [];
+    try {
+      const exeDir = path.dirname(process.execPath);
+      candidates.push(
+        path.join(
+          exeDir,
+          "resources",
+          "app",
+          "extensions",
+          "windsurf",
+          "dist",
+          "extension.js",
+        ),
+      );
+    } catch {}
+    candidates.push(
       "E:\\Windsurf\\resources\\app\\extensions\\windsurf\\dist\\extension.js",
       "C:\\Program Files\\Windsurf\\resources\\app\\extensions\\windsurf\\dist\\extension.js",
       "D:\\Windsurf\\resources\\app\\extensions\\windsurf\\dist\\extension.js",
-    ];
+    );
     let target = null;
     for (const c of candidates) {
       if (fs.existsSync(c)) {

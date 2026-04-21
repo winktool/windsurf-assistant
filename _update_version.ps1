@@ -1,9 +1,10 @@
 $ErrorActionPreference = 'Stop'
-$dir = 'e:\道\道生一\一生二\github项目同步\windsurf-assistant\bundled-origin'
+$dir = Join-Path $PSScriptRoot 'bundled-origin'
 # 把 anchor.py 同步到 锚.py (中文名 fallback)
 Copy-Item "$dir\anchor.py" "$dir\锚.py" -Force
 # 重算 VERSION
-$lines = @('17.34.0')
+$ver = (Get-Content (Join-Path $PSScriptRoot 'package.json') -Raw | ConvertFrom-Json).version
+$lines = @($ver)
 $names = @('源.js','锚.py','anchor.py','_dao_81.txt')
 foreach ($n in $names) {
     $p = Join-Path $dir $n
