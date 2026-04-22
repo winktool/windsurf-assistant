@@ -1,51 +1,14 @@
-# Windsurf Assistant · 道Agent + 无感切号
+# Windsurf Assistant · WAM 无感切号
 
-> 一个 Windsurf 插件, 二核合一:
+> 纯切号插件. 无外部依赖, 单文件 `extension.js`.
 >
-> - **道Agent** — 为核. 一键把 Cascade 的 system prompt 换为道德经 81 章, 绝 rules/skills/workflows/memories 侧信道注入.
-> - **无感切号** — 为器. 百号轮转, 额度耗尽自切, 下一条消息就是新号.
+> 百号轮转, 额度耗尽自切, 下一条消息就是新号.
 
-两者相观而善. 道法自然, 无为而无不为.
-
-**本源**: 道Agent 所注之道德经, 源于姊妹项目 [`zhouyoukang/AGI`](https://github.com/zhouyoukang/AGI) — 道生一. 此仓 (windsurf-assistant) 为其用 — 一生二.
+**本源**: 姊妹项目 [`zhouyoukang/AGI`](https://github.com/zhouyoukang/AGI) — 道生一. 此仓 (windsurf-assistant) 为其用 — 一生二.
 
 ---
 
-## 一 · 道Agent (为核)
-
-Cascade 官方系统提示里塞了什么?
-
-```xml
-<communication_style>…</communication_style>
-<tool_calling>…</tool_calling>
-<making_code_changes>…</making_code_changes>
-<user_rules>…<MEMORY[user_global]>…</MEMORY[user_global]></user_rules>
-<skills>…</skills>
-<workflows>…</workflows>
-<memories>…</memories>
-<ide_metadata>…</ide_metadata>
-```
-
-**道Agent 一键化除全部**, 只余道德经 81 章, 前缀 `You are Cascade. 你的唯一` 伪装权重 — 让模型把它当作身份而非可忽略的注入.
-
-```text
-点 ☯ 道Agent  →  每次 Cascade 发问前, SP 被纯净换成 TAO_HEADER + 道德经全文
-点 ○ 官方Agent →  透传官方原味 SP
-```
-
-**三路径齐断**:
-
-1. `plain utf-8` — 裸 UTF-8 SP
-2. `nested chat_message` — 嵌套 ChatMessage role=0 content
-3. `raw_sp` — RawGetChatMessage field 3
-
-**16 侧信道标记**: communication_style / tool_calling / making_code_changes / running_commands / user_rules / user_information / workspace_information / skills / workflows / memories / memory_system / MEMORY[ / ide_metadata / Bug fixing discipline / Long-horizon workflow / Planning cadence — 任一命中即整体置换.
-
-**v17.36 剥离**: 道Agent proxy 已独立为姊妹插件 `020-道VSIX_DaoAgi`. 本仓专注 WAM 无感切号.
-
----
-
-## 二 · 无感切号 (为器)
+## 一 · 无感切号
 
 我手上有 100+ 个 Windsurf 账号. 每个的日额度/周额度/试用期/可用性都不一样. 不想盯着这些.
 
@@ -58,7 +21,18 @@ Cascade 官方系统提示里塞了什么?
 
 ---
 
-## 三 · 一行四键 (v17.21)
+## 二 · v17.42.13 新特性
+
+- **四级容错 activate**: 产品名/数据目录/存储路径/日志 逐段 try/catch, 降级而不崩
+- **六级 WAM_DIR 兜底**: env → config → legacy → 用户隔离 → globalStorage → tmpdir
+- **三级产品名检测**: config → appName → execPath basename
+- **用户隔离**: `~/.wam-hot/<user>` 多用户环境安全
+- **路径可写探针**: `_isPathWritable()` 写探针文件验证
+- **E2E 全覆盖**: 387 断言 / 0 fail / 28 层测试
+
+---
+
+## 三 · 模式与按键 (v17.21)
 
 侧栏只暴露一组按钮, 账号轴 `|` Agent 轴:
 
@@ -83,7 +57,7 @@ Cascade 官方系统提示里塞了什么?
 
 ---
 
-## 五 · 架构 (唯变所适 · v17.41)
+## 五 · 架构 (唯变所适 · v17.42.13)
 
 ```text
 ┌──────────────────────────────────────────┐
@@ -92,11 +66,12 @@ Cascade 官方系统提示里塞了什么?
               │ extension.js (纯 WAM · 零外部依赖)
               ▼
 ┌──────────────────────────────────────────┐
-│ 无感切号 WAM                              │
+│ 无感切号 WAM  v17.42.13                     │
+│  - 四级容错: activate 四段 try/catch       │
+│  - 六级 WAM_DIR 兜底 + 用户隔离           │
 │  - 消息锚定: 五路探针 · 对话发送即切号     │
-│  - 双身份: Firebase + Devin 自动探测切换   │
+│  - 双身份: Firebase + Devin 自动探测       │
 │  - Chromium 原生桥 > 系统代理 > 直连       │
-│  - WAM_DIR: env/config/默认 ~/.wam-hot    │
 │  - 端点/端口/模型: 全 wam.* 可配          │
 └─────────────┬────────────────────────────┘
               │ 直连官方 (零中继)
