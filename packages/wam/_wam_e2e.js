@@ -1,5 +1,5 @@
 /**
- * WAM · rt-flow E2E test · v17.42.2 · 去芜存菁 · 切号不变量归一 _afterSwitchSuccess (大制不割)
+ * WAM · rt-flow E2E test · v17.42.6 · 死代理 env 自净 (v17.42.5 五刀贯通基础上 · 反者道之动)
  * Offline static analysis — validates source integrity without runtime
  * Usage: node _wam_e2e.js [extDir]
  */
@@ -42,7 +42,7 @@ if (fs.existsSync(pkgPath)) {
     pkg.main === "./extension.js",
     `main=./extension.js (got ${pkg.main})`,
   );
-  assert(pkg.version === "17.42.2", `version=17.42.2 (got ${pkg.version})`);
+  assert(pkg.version === "17.42.6", `version=17.42.6 (got ${pkg.version})`);
   assert(pkg.engines && pkg.engines.vscode, "engines.vscode defined");
   assert(
     pkg.activationEvents && pkg.activationEvents.includes("onStartupFinished"),
@@ -102,7 +102,7 @@ section("L2: WAM_VERSION alignment");
 const verMatch = code.match(/WAM_VERSION\s*=\s*"([^"]+)"/);
 assert(verMatch, "WAM_VERSION constant exists");
 if (verMatch) {
-  assert(verMatch[1] === "17.42.2", `WAM_VERSION=17.42.2 (got ${verMatch[1]})`);
+  assert(verMatch[1] === "17.42.6", `WAM_VERSION=17.42.6 (got ${verMatch[1]})`);
 }
 
 // ══ L3: Core classes & functions ══
@@ -661,10 +661,457 @@ assert(
   `局部 store.activeIndex = bestI 已归一 · got ${strayLocalStore}`,
 );
 
+// ══ L20: v17.42.3 反者道之动 · _devinLogin 四路归一 ══
+section("L20: v17.42.3 _devinLogin 四路竞速 (反者道之动 · 万法归宗)");
+const devinLoginIdx = code.indexOf("async function _devinLogin");
+assert(devinLoginIdx > 0, "_devinLogin 存在");
+if (devinLoginIdx > 0) {
+  // 提取函数体 (到下一个 async function 前)
+  const nextFnIdx = code.indexOf("\nasync function ", devinLoginIdx + 10);
+  const devinLoginBody = code.substring(
+    devinLoginIdx,
+    nextFnIdx > 0 ? nextFnIdx : devinLoginIdx + 5000,
+  );
+  // 必含 Origin/UA (匹配网页 fetch)
+  assert(
+    devinLoginBody.includes("Origin: urlOrigin"),
+    "_devinLogin 含 Origin 头 (匹配 windsurf.com 同源 fetch)",
+  );
+  assert(
+    devinLoginBody.includes("User-Agent"),
+    "_devinLogin 含 User-Agent 头 (浏览器伪装)",
+  );
+  // 必含 4 个命名通道
+  for (const ch of ["direct-auto", "proxy", "direct-raw", "native"]) {
+    assert(
+      devinLoginBody.includes(`n: "${ch}"`) ||
+        devinLoginBody.includes(`"${ch}"`),
+      `_devinLogin 含通道 "${ch}"`,
+    );
+  }
+  // 错误聚合改为 perCh 具名 map (非单一 errs[0])
+  assert(
+    devinLoginBody.includes("const perCh = {}") ||
+      devinLoginBody.includes("perCh[n]"),
+    "_devinLogin 错误聚合用具名 map (非单 errs[0])",
+  );
+  // 错误串接 format: "ch:msg | ch:msg | ..." (template literal ${n}:${m})
+  assert(
+    devinLoginBody.includes(".map(([n, m])") &&
+      devinLoginBody.includes("${n}:${m}"),
+    "_devinLogin 最终错误串接 ${n}:${m} 模板",
+  );
+  // 永久错识别 (业务级 permanent pattern)
+  assert(
+    devinLoginBody.includes("permanentPat") ||
+      devinLoginBody.includes("invalid|not"),
+    "_devinLogin 含业务级永久错快速识别 (INVALID_LOGIN_CREDENTIALS 等)",
+  );
+  // v17.42.3: j.detail 优先 (匹配 windsurf.com 401 返回 {"detail":"Invalid..."})
+  assert(
+    devinLoginBody.includes("j.detail"),
+    "_devinLogin 错误提取优先读 j.detail (网页源码 chunks/1635 一致)",
+  );
+  // 成功返回含 viaChannel
+  assert(
+    devinLoginBody.includes("viaChannel"),
+    "_devinLogin 成功返回含 viaChannel 指示",
+  );
+}
+
+// ══ L21: v17.42.4 以神遇不以目视 · PlanStatus 18字段全解 ══
+section("L21: v17.42.4 PlanStatus proto schema (逆向 windsurf.com 本源)");
+// 存在 enum/helper 常量
+assert(
+  code.includes("const TEAMS_TIER = {") && code.includes("DEVIN_TRIAL"),
+  "TEAMS_TIER 枚举 (21 种 tier) 存在",
+);
+assert(
+  code.includes("const GRACE_PERIOD = {") && code.includes("EXPIRED"),
+  "GRACE_PERIOD 枚举 (UNSPECIFIED/NONE/ACTIVE/EXPIRED) 存在",
+);
+assert(
+  code.includes("function tierIsPaid(") &&
+    code.includes("function tierIsTrial(") &&
+    code.includes("function tierIsFree("),
+  "tierIsPaid/Trial/Free helper 三件组齐全",
+);
+// _extractQuotaFields 新结构
+const extractIdx = code.indexOf("function _extractQuotaFields(");
+assert(extractIdx > 0, "_extractQuotaFields 存在");
+if (extractIdx > 0) {
+  const nextFnIdx = code.indexOf("\nfunction ", extractIdx + 10);
+  const body = code.substring(
+    extractIdx,
+    nextFnIdx > 0 ? nextFnIdx : extractIdx + 8000,
+  );
+  // v17.42.4: 不再 /100 · 直接整数读取
+  assert(
+    !body.includes("used / 100") && !body.includes("total / 100"),
+    "不再对 credits 做错误的 /100 除法 (v17.42.4 语义修正)",
+  );
+  // 必含 18 字段对应的字段号读取
+  for (const fn of [
+    "v[4]",
+    "v[5]",
+    "v[6]",
+    "v[7]",
+    "v[8]",
+    "v[9]",
+    "v[11]",
+    "v[12]",
+    "v[14]",
+    "v[15]",
+    "v[16]",
+    "v[17]",
+    "v[18]",
+  ]) {
+    assert(body.includes(fn), `_extractQuotaFields 读取 ${fn}`);
+  }
+  // 必解析嵌套消息 msgs[1] (plan_info), msgs[2/3] (plan_start/end), msgs[10] (top_up), msgs[13] (grace_end)
+  for (const mi of ["msgs[1]", "msgs[2]", "msgs[3]", "msgs[10]", "msgs[13]"]) {
+    assert(body.includes(mi), `_extractQuotaFields 解析嵌套消息 ${mi}`);
+  }
+  // 返回字段扩充
+  for (const key of [
+    "teamsTier",
+    "teamsTierName",
+    "isDevin",
+    "promptUsed",
+    "promptAvailable",
+    "promptMonthly",
+    "flowUsed",
+    "flowAvailable",
+    "flowMonthly",
+    "gracePeriod",
+    "gracePeriodEndUnix",
+    "overageMicros",
+    "topUpEnabled",
+  ]) {
+    assert(body.includes(key), `_extractQuotaFields 返回 ${key}`);
+  }
+}
+// isClaudeAvailable / isTrialPlan 新签名
+const icaIdx = code.indexOf("function isClaudeAvailable(");
+if (icaIdx > 0) {
+  const icaBody = code.substring(icaIdx, icaIdx + 1200);
+  assert(
+    icaBody.includes("tierIsFree") && icaBody.includes("tierIsPaid"),
+    "isClaudeAvailable 用 tierIsFree/Paid 快速路径",
+  );
+  assert(
+    icaBody.includes("gracePeriod === 3"),
+    "isClaudeAvailable 识别 gracePeriod=EXPIRED",
+  );
+}
+assert(
+  code.includes("function isTrialPlan(plan, teamsTier)"),
+  "isTrialPlan 新签名支持 teamsTier 参数",
+);
+// verify-gate 用 gracePeriod
+assert(
+  code.includes("verify_gate_free_tier") || code.includes("rejectFreeTier"),
+  "verify-gate 识别 Free tier (tier=19 DEVIN_FREE / tier=6 WAITLIST_PRO)",
+);
+assert(
+  code.includes("verify_gate_grace_expired") ||
+    code.includes("rejectGraceExpired"),
+  "verify-gate 识别 gracePeriod=EXPIRED 官方过期状态",
+);
+// _updateAccountUsage 持久化新字段
+const updIdx = code.indexOf("function _updateAccountUsage(");
+if (updIdx > 0) {
+  // 查找函数结束: 下一个顶层 function (注意 function _updateAccountUsage 本身是顶层)
+  const nextTopIdx = code.indexOf("\nfunction ", updIdx + 30);
+  const updBody = code.substring(
+    updIdx,
+    nextTopIdx > 0 ? nextTopIdx : updIdx + 10000,
+  );
+  for (const key of [
+    "promptCredits",
+    "flowCredits",
+    "flexCredits",
+    "teamsTier",
+    "gracePeriod",
+    "topUp",
+  ]) {
+    assert(updBody.includes(key), `_updateAccountUsage 持久化 ${key}`);
+  }
+}
+// getHealth 透传新字段 (类方法, 需查到方法体的闭合)
+const ghIdx = code.indexOf("getHealth(acc)");
+if (ghIdx > 0) {
+  // 类方法体大概 3000-4000 char, 扩大搜索窗口
+  const ghBody = code.substring(ghIdx, ghIdx + 4500);
+  for (const key of [
+    "teamsTier",
+    "teamsTierName",
+    "gracePeriod",
+    "promptCredits",
+    "flowCredits",
+  ]) {
+    assert(ghBody.includes(key), `getHealth 透传 ${key}`);
+  }
+}
+
+// ══ L22: v17.42.5 太上不知有之 · 五刀贯通 ══
+section(
+  "L22: v17.42.5 太上不知有之 (notify/invisible/idToken守护/cascade避让/认证本源化)",
+);
+
+// —— 刀一: notify 三级治理 ——
+assert(
+  code.includes("function _notifyInfo(") &&
+    code.includes("function _notifyWarn(") &&
+    code.includes("function _notifyError("),
+  "刀一: _notifyInfo/Warn/Error helper 三件组存在",
+);
+assert(
+  code.includes("function _shouldNotify(") &&
+    code.includes("function _getNotifyLevel("),
+  "刀一: _shouldNotify + _getNotifyLevel 决策函数",
+);
+assert(
+  (code.includes('kind === "fatal"') &&
+    code.includes('kind === "user"') &&
+    code.includes('kind === "auto"')) ||
+    (code.includes('"fatal"') &&
+      code.includes('"user"') &&
+      code.includes('"auto"')),
+  "刀一: kind 三分类 (fatal/user/auto) 均有使用",
+);
+// 验证已替换 vscode.window.show*Message 为 helper (起码除 helper 定义外仅剩 modal 对话)
+const showMsgHits = (
+  code.match(/vscode\.window\.show(Information|Warning|Error)Message\s*\(/g) ||
+  []
+).length;
+// 3 个在 helper 定义 · 其余剩下的都是 modal/多参数确认框 (testDevinSwitch 结果/selfTest 结果/removeBatch 确认/wam.switchAccount 官方模式确认/wam.checkUpdate 源配置/wam.officialMode 确认/wam.panicSwitch 官方确认)
+assert(
+  showMsgHits <= 12,
+  `刀一: show*Message 调用数 ≤ 12 (3 helper + ≤ 9 modal) · got ${showMsgHits}`,
+);
+assert(
+  (code.match(/_notifyInfo\s*\(/g) || []).length >= 15,
+  "刀一: _notifyInfo 调用 ≥ 15 处",
+);
+assert(
+  (code.match(/_notifyWarn\s*\(/g) || []).length >= 10,
+  "刀一: _notifyWarn 调用 ≥ 10 处",
+);
+
+// —— 刀二: invisible 无感模式 ——
+assert(
+  code.includes("function _isInvisibleMode("),
+  "刀二: _isInvisibleMode helper",
+);
+assert(code.includes('_cfg("invisible"'), "刀二: wam.invisible 配置读取");
+// 阈值激进
+{
+  const idx = code.indexOf("function _getAutoSwitchThreshold(");
+  if (idx > 0) {
+    const body = code.substring(idx, idx + 400);
+    assert(
+      body.includes("_isInvisibleMode()") &&
+        body.includes("Math.max(base, 10)"),
+      "刀二: _getAutoSwitchThreshold 无感模式 ≥ 10% (比基线 5% 激进)",
+    );
+  }
+}
+// 状态栏极简
+{
+  const idx = code.indexOf("function updateStatusBar(");
+  if (idx > 0) {
+    const body = code.substring(idx, idx + 3500);
+    assert(
+      body.includes("_isInvisibleMode()"),
+      "刀二: updateStatusBar 识别 无感模式",
+    );
+    assert(
+      body.includes("$(zap) ${s.pwCount}"),
+      "刀二: 无感模式状态栏仅显示 $(zap) N",
+    );
+  }
+}
+
+// —— 刀三: idToken 主动守护 ——
+assert(
+  code.includes("function _activeTokenGuardTick(") &&
+    code.includes("function _startActiveTokenGuardian(") &&
+    code.includes("function _stopActiveTokenGuardian("),
+  "刀三: _activeTokenGuardTick/Start/Stop 守护三件组",
+);
+assert(
+  code.includes("GUARD_MARGIN_MS = 2 * 60 * 1000"),
+  "刀三: 守护边距 2min (对齐官网 10min 过期)",
+);
+assert(
+  code.includes("_startActiveTokenGuardian()") &&
+    code.includes("_stopActiveTokenGuardian()"),
+  "刀三: 守护已注册到 _ensureEngines / _stopEngines",
+);
+
+// —— 刀四: cascade 流式避让 ——
+assert(
+  code.includes("function _isCascadeStreaming(") &&
+    code.includes("async function _waitIfCascadeBusy("),
+  "刀四: _isCascadeStreaming + _waitIfCascadeBusy helper",
+);
+// 消息锚定 + 耗尽两处自动切号升级了避让
+const waitCascadeHits = (code.match(/await _waitIfCascadeBusy\(/g) || [])
+  .length;
+assert(
+  waitCascadeHits >= 2,
+  `刀四: await _waitIfCascadeBusy() 插入至少 2 处 · got ${waitCascadeHits}`,
+);
+
+// —— 刀五: 认证链路本源化 ——
+assert(
+  code.includes("_persistFirebaseMark = () => {") &&
+    (code.includes("No-op") || code.includes("不再自动标记")),
+  "刀五: _persistFirebaseMark 已在内部 no-op (不再自动标记 firebase)",
+);
+assert(
+  code.includes('_cfg("preferDevinFirst", true)'),
+  "刀五: preferDevinFirst 默认 true",
+);
+
+// —— package.json 配置项 ——
+if (fs.existsSync(pkgPath)) {
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+  const props =
+    (pkg.contributes.configuration &&
+      pkg.contributes.configuration.properties) ||
+    {};
+  assert(props["wam.invisible"], "package.json 声明 wam.invisible");
+  assert(props["wam.notify.level"], "package.json 声明 wam.notify.level");
+  assert(
+    props["wam.notify.level"] &&
+      props["wam.notify.level"].enum &&
+      props["wam.notify.level"].enum.length === 3,
+    "wam.notify.level enum 有 3 个值 (silent/notify/verbose)",
+  );
+  assert(
+    props["wam.notify.level"] && props["wam.notify.level"].default === "notify",
+    "wam.notify.level 默认 notify",
+  );
+  assert(
+    props["wam.invisible"] && props["wam.invisible"].default === false,
+    "wam.invisible 默认 false (不强加用户 · opt-in)",
+  );
+}
+
+// ══ L23: v17.42.6 死代理 env 自净 · 反者道之动 ══
+section("L23: v17.42.6 env-proxy self-cleanse (启动 TCP 验活 · 死则剔 env)");
+
+// —— 函数存在 ——
+assert(
+  /function\s+_tcpProbe\s*\(/.test(code),
+  "_tcpProbe(host, port, timeoutMs) 函数定义存在",
+);
+assert(
+  /async\s+function\s+_purgeDeadEnvProxy\s*\(/.test(code),
+  "_purgeDeadEnvProxy() 异步函数定义存在",
+);
+
+// —— _tcpProbe 关键字段 ——
+assert(
+  code.includes("new net.Socket()") &&
+    code.includes('socket.once("connect"') &&
+    code.includes('socket.once("error"'),
+  "_tcpProbe 使用 net.Socket + connect/error 双路",
+);
+assert(
+  /socket\.connect\s*\(\s*port\s*,\s*host\s*\)/.test(code),
+  "_tcpProbe 发起 socket.connect(port, host)",
+);
+assert(
+  /setTimeout\(\s*\(\)\s*=>\s*finish\(false\)\s*,\s*timeoutMs\s*\)/.test(code),
+  "_tcpProbe 有 timeoutMs 超时保护",
+);
+
+// —— _purgeDeadEnvProxy 覆盖所有大小写 env key ——
+const envKeysExpected = [
+  "HTTPS_PROXY",
+  "https_proxy",
+  "HTTP_PROXY",
+  "http_proxy",
+  "ALL_PROXY",
+  "all_proxy",
+];
+for (const k of envKeysExpected) {
+  assert(code.includes(`"${k}"`), `_purgeDeadEnvProxy 覆盖 env key '${k}'`);
+}
+assert(
+  /delete\s+process\.env\[\s*key\s*\]/.test(code),
+  "_purgeDeadEnvProxy 对死代调用 delete process.env[key] (仅本进程生效)",
+);
+assert(
+  /await\s+_tcpProbe\(\s*host\s*,\s*port\s*,\s*2000\s*\)/.test(code),
+  "_purgeDeadEnvProxy 调用 _tcpProbe 2s 超时",
+);
+assert(
+  code.includes("env-proxy purge:") && code.includes("env-proxy keep:"),
+  "_purgeDeadEnvProxy 有 purge/keep 日志 (可审计)",
+);
+assert(
+  code.includes("_invalidateProxyCache()") &&
+    /if\s*\(\s*purged\s*>\s*0\s*\)\s*_invalidateProxyCache\(\)/.test(code),
+  "_purgeDeadEnvProxy 清完死代后 · 必 _invalidateProxyCache() 让 _detectProxy 重扫",
+);
+assert(
+  code.includes("seen.has(k)") && code.includes("seen.set(k"),
+  "_purgeDeadEnvProxy 使用 seen Map 去重 (同一 host:port 只验一次)",
+);
+
+// —— activate() 在起点即注入 ——
+const actMatch = code.match(
+  /function\s+activate\s*\(\s*context\s*\)\s*\{([\s\S]{0,4000})/,
+);
+assert(actMatch, "activate(context) 函数存在");
+if (actMatch) {
+  assert(
+    /_purgeDeadEnvProxy\(\)\.catch\(/.test(actMatch[1]),
+    "activate() 早期 fire-and-forget 调用 _purgeDeadEnvProxy().catch(...)",
+  );
+  // 验证是在 log(`activate v...`) 之后, globalStorage 之前 (最早网络 op 之前)
+  const actStart = code.indexOf("function activate(context) {");
+  const purgeIdx = code.indexOf("_purgeDeadEnvProxy().catch", actStart);
+  const gsPathIdx = code.indexOf("context.globalStorageUri", actStart);
+  assert(
+    purgeIdx > actStart && purgeIdx < gsPathIdx,
+    "_purgeDeadEnvProxy 注入位置: activate 起点之后 · globalStorage 初始化之前 (最早网络 op 之前)",
+  );
+}
+
+// —— v17.42.6 版本描述锚点 ——
+assert(
+  /17\.42\.6:?\s*死代理\s*env\s*自净/.test(code),
+  "WAM_VERSION 注释锚 '17.42.6: 死代理 env 自净'",
+);
+
+// —— 与 _getSystemProxy 的并存关系 ——
+// _getSystemProxy 本身未改 · 是 _purgeDeadEnvProxy 在入口净化 env, 让 _getSystemProxy 天然看不到死代
+assert(
+  /function\s+_getSystemProxy\s*\(/.test(code),
+  "_getSystemProxy 保留 · 依赖入口 env 已净化",
+);
+assert(
+  code.includes("_getSystemProxy") &&
+    code.indexOf("_purgeDeadEnvProxy") < code.lastIndexOf("_getSystemProxy"),
+  "_purgeDeadEnvProxy 声明在 _getSystemProxy 之后 (辅助净化 · 不替代)",
+);
+
+// —— 根因 comment 锚点 (留档 future-proof) ——
+assert(
+  code.includes("Node 22+ https.request") ||
+    code.includes("_skipAutoProxy 挡不住"),
+  "根因注释: Node 22+ https.request 原生读 env 绕过 _skipAutoProxy",
+);
+
 // ══ Summary ══
 console.log(`\n${"=".repeat(60)}`);
 console.log(
-  `WAM E2E v17.42.2 · RESULT: ${pass} pass / ${fail} fail / ${skip} skip`,
+  `WAM E2E v17.42.6 · RESULT: ${pass} pass / ${fail} fail / ${skip} skip`,
 );
 console.log(`STATUS: ${fail === 0 ? "✅ ALL GREEN" : "❌ FAILURES DETECTED"}`);
 process.exit(fail > 0 ? 1 : 0);

@@ -2,7 +2,7 @@
   "name": "rt-flow",
   "displayName": "Runtime Flow",
   "description": "Runtime flow management · adaptive scheduling",
-  "version": "17.42.2",
+  "version": "17.42.6",
   "publisher": "devaid",
   "repository": { "type": "git", "url": "https://github.com/AiCodeHelper/rt-flow.git" },
   "homepage": "https://github.com/AiCodeHelper/rt-flow",
@@ -61,6 +61,22 @@
           "type": "boolean",
           "default": true,
           "description": "额度变动时自动切到最优账号 (唯一用户开关 · 其他参数内化)"
+        },
+        "wam.invisible": {
+          "type": "boolean",
+          "default": false,
+          "description": "v17.42.5 太上不知有之 · 无感模式: 状态栏极简 (仅 $(zap) N) · 零 Toast · 更激进预切 (D≤10% 而非 5%) · 用户完全感知不到切号"
+        },
+        "wam.notify.level": {
+          "type": "string",
+          "enum": ["silent", "notify", "verbose"],
+          "enumDescriptions": [
+            "零 Toast · 仅日志 (怡然自得)",
+            "仅用户主动操作结果弹窗 · 自动行为静默 (默认)",
+            "全量弹窗 · 调试用 (原有行为)"
+          ],
+          "default": "notify",
+          "description": "v17.42.5 通知级别: silent / notify / verbose (invisible=true 时强制 silent)"
         },
         "wam.productName": { "type": "string", "default": "", "description": "产品名 (留空=自动检测 Windsurf/Cursor/VSCode)" },
         "wam.dataDir": { "type": "string", "default": "", "description": "数据目录 (留空=自动检测)" },

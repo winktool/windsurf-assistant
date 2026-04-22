@@ -435,7 +435,7 @@ let RELOAD_SIGNAL = path.join(WAM_DIR, "_reload_signal");
 let RELOAD_READY = path.join(WAM_DIR, "_reload_ready");
 // TRIAL_MAX_DAYS已移除 — 官方Trial是14天(非90天), 且过期后仍有配额, 不再用时间猜测过期
 // PURGE_INTERVAL_MS → _getPurgeIntervalMs() (v17.1 getter化)
-const WAM_VERSION = "17.42.2"; // v17.42.2: 去芜存菁 · 切号后state不变量统一 _afterSwitchSuccess (大制不割)
+const WAM_VERSION = "17.42.6"; // v17.42.6: 死代理 env 自净 · 反者道之动 — 启动 TCP 验活 · 自动剔除 env 中已停机的 HTTPS_PROXY/HTTP_PROXY, 根治新加账号因 env 污染致 login 四路全死的 verify-gate 探测失败 (Node 22+ https.request 原生读 env 亦挡不住)
 
 let _store = null;
 let _sidebarProvider = null;
@@ -1025,10 +1025,17 @@ function _getBurstDuration() {
   return _cfg("burstDurationMs", 60000);
 }
 function _getAutoSwitchThreshold() {
-  return _cfg("autoSwitchThreshold", 5);
+  const base = _cfg("autoSwitchThreshold", 5);
+  // v17.42.5 无感模式: 更激进预切, 比底线早触发 (10% vs 5%) · 太上不知有之
+  // 用户永远不会看到 D/W 真的降到危险值, 因为提前切了
+  if (_isInvisibleMode()) return Math.max(base, 10);
+  return base;
 }
 function _getPredictiveThreshold() {
-  return _cfg("predictiveThreshold", 25);
+  const base = _cfg("predictiveThreshold", 25);
+  // 无感模式: 更早预热候选 token (35% vs 25%)
+  if (_isInvisibleMode()) return Math.max(base, 35);
+  return base;
 }
 function _getDailyResetHourUtc() {
   return _cfg("dailyResetHourUtc", 8);
@@ -1242,6 +1249,50 @@ function log(msg) {
   console.log("WAM:", msg);
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// v17.42.5 · 太上不知有之 · 通知/无感三级治理
+// ═══════════════════════════════════════════════════════════════════
+// 道法自然 · 为而不争 · 披褐怀玉
+//   silent  : 零 Toast · 仅日志 (怡然自得)
+//   notify  : 仅用户主动操作 · 自动行为一律静默 (默认)
+//   verbose : 现状 · 全量 Toast (调试可见)
+//
+//   wam.invisible = true  →  强制 silent + 状态栏极简 + 激进预切
+//                            (太上 · 百姓皆谓我自然)
+// ─────────────────────────────────────────────────────────────────
+function _isInvisibleMode() {
+  return !!_cfg("invisible", false);
+}
+function _getNotifyLevel() {
+  // 无感模式 → 强制 silent (覆盖用户配置)
+  if (_isInvisibleMode()) return "silent";
+  const lvl = String(_cfg("notify.level", "notify")).toLowerCase();
+  return ["silent", "notify", "verbose"].includes(lvl) ? lvl : "notify";
+}
+// kind: "user"  → 用户主动命令结果 (手动切号/添加/模式切换等) · notify/verbose 显示
+//       "auto"  → 后台自动行为 (自动切号/autoUpdate/Devin识别等) · 仅 verbose 显示
+//       "fatal" → 致命错误 (归档账号/切号失败等) · 永远显示
+function _shouldNotify(kind) {
+  if (kind === "fatal") return true; // 致命永不静默
+  const lvl = _getNotifyLevel();
+  if (lvl === "silent") return false;
+  if (lvl === "notify") return kind === "user"; // notify 只响应用户主动
+  return true; // verbose 全量
+}
+function _notifyInfo(msg, kind = "user") {
+  log(`[notify:${kind}] ${msg}`);
+  if (_shouldNotify(kind)) vscode.window.showInformationMessage(msg);
+}
+function _notifyWarn(msg, kind = "user") {
+  log(`[notify:${kind}:warn] ${msg}`);
+  if (_shouldNotify(kind)) vscode.window.showWarningMessage(msg);
+}
+function _notifyError(msg) {
+  // error 保留 vscode 原生路径 · 永不静默 (符合用户关键反馈预期)
+  log(`[notify:error] ${msg}`);
+  vscode.window.showErrorMessage(msg);
+}
+
 // ── 凭证净化 — 道法自然·反者道之动 ──
 // 聊天软件/输入法/Markdown渲染器 会把 ASCII 特殊字符悄悄换成 look-alike 全角/零宽:
 //   "*" ↔ "＊"(U+FF0A)   "&" ↔ "＆"(U+FF06)   "$" ↔ "＄"(U+FF04)
@@ -1442,12 +1493,30 @@ function isWeeklyDrought() {
 // ── Claude模型可用性判定 — 真正锚定底层 ──
 // 道法自然: planEnd过期 ≠ 不可用! Windsurf有宽限期, 实际以D/W配额为准
 // Free plan(D0/W0) → 唯一死刑 | 有配额(D>0或W>0) → 可用
-function isTrialPlan(plan) {
+// v17.42.4: 新增 teamsTier enum 快速路径 (19=DEVIN_FREE/6=WAITLIST_PRO 直接死刑)
+//           + gracePeriod=3(EXPIRED) 官方过期状态直接死刑 (替代手算时间)
+function isTrialPlan(plan, teamsTier) {
+  // teamsTier 优先 (官方枚举最权威)
+  const t = Number(teamsTier || 0);
+  if (t > 0) {
+    if (tierIsPaid(t)) return false; // PRO/ENTERPRISE/DEVIN_PRO/MAX 等
+    if (tierIsTrial(t)) return true; // TRIAL / DEVIN_TRIAL
+    if (tierIsFree(t)) return true; // DEVIN_FREE 归类试用性质(不是正规付费)
+  }
   const p = (plan || "").toLowerCase();
   return !["pro", "enterprise", "team", "individual"].includes(p);
 }
 
 function isClaudeAvailable(health) {
+  // ── v17.42.4 优先路径: 用 teamsTier 官方枚举 精确判定 ──
+  const tier = Number(health.teamsTier || 0);
+  if (tier > 0) {
+    if (tierIsFree(tier)) return false; // DEVIN_FREE / WAITLIST_PRO → 死刑
+    if (tierIsPaid(tier)) return true; // 付费层 → 全量可用
+  }
+  // Grace period 官方过期状态 → 死刑 (替代手算 planEnd>Date.now())
+  if (health.gracePeriod === 3) return false; // EXPIRED
+
   const plan = (health.plan || "").toLowerCase();
   // v17.8 道法自然: 删除 plan==='devin' 假豁免 — Devin 账号走真实 plan (Trial/Pro/Free) 判断
   // v16根因修复: Free plan无论配额多少, Claude付费模型均不可用
@@ -2021,20 +2090,56 @@ class AccountStore {
         const plan = (quota.planName || "").toLowerCase();
         const planEnd = quota.planEndUnix ? quota.planEndUnix * 1000 : 0;
         const isExpired = planEnd > 0 && Date.now() > planEnd;
-        // v16根因修复: Free plan无论配额多少均拒绝; 试用过期无论配额多少均拒绝
-        if (plan === "free" || (isExpired && isTrialPlan(plan))) {
-          const reason =
-            plan === "free"
-              ? `verify_gate_free: plan=free, D${quota.daily}W${quota.weekly}仅限免费模型, Claude不可用`
-              : `verify_gate_expired: plan=${plan}过期, D${quota.daily}W${quota.weekly}, Claude不可用`;
+        // v17.42.4: teamsTier + gracePeriod 三位一体精确判定 (替代手算时间)
+        const tier = Number(quota.teamsTier || 0);
+        const isFreeTier = tier > 0 && tierIsFree(tier); // DEVIN_FREE/WAITLIST_PRO
+        const isPaidTier = tier > 0 && tierIsPaid(tier); // PRO/ENTERPRISE/等
+        const isGraceExpired = quota.gracePeriod === 3; // 官方 EXPIRED
+        // 拒绝条件:
+        //   1. Free tier 官方标记 (tier=19/6) → 死刑
+        //   2. Free plan 字符串 (legacy API 兼容)
+        //   3. 试用计划 + grace period 官方过期 (gracePeriod=3)
+        //   4. 试用计划 + planEnd 过期 (legacy 兜底, 无 gracePeriod 信号时用)
+        const rejectFreeTier = isFreeTier;
+        const rejectFreePlan = plan === "free";
+        const rejectGraceExpired =
+          isGraceExpired && (isTrialPlan(plan, tier) || isFreeTier);
+        const rejectLegacyExpired =
+          !quota.gracePeriod && // 仅当无 gracePeriod 信号时启用兜底
+          isExpired &&
+          isTrialPlan(plan, tier);
+        if (
+          rejectFreeTier ||
+          rejectFreePlan ||
+          rejectGraceExpired ||
+          rejectLegacyExpired
+        ) {
+          let reason;
+          if (rejectFreeTier)
+            reason = `verify_gate_free_tier: tier=${quota.teamsTierName}(${tier}) · Claude付费模型不可用`;
+          else if (rejectFreePlan)
+            reason = `verify_gate_free: plan=free, D${quota.daily}W${quota.weekly}仅限免费模型, Claude不可用`;
+          else if (rejectGraceExpired)
+            reason = `verify_gate_grace_expired: plan=${plan}(${quota.teamsTierName || tier}), gracePeriod=EXPIRED, D${quota.daily}W${quota.weekly}, Claude不可用`;
+          else
+            reason = `verify_gate_expired: plan=${plan}过期, D${quota.daily}W${quota.weekly}, Claude不可用`;
           log(`verify-gate: ${email} → 拒绝 (${reason})`);
           this._archiveRemoved([this.accounts[idx]], reason);
           this.accounts.splice(idx, 1);
           if (this.activeIndex === idx) this.activeIndex = -1;
           else if (this.activeIndex > idx) this.activeIndex--;
           this.save();
-          vscode.window.showWarningMessage(
-            `WAM: 已拒绝 ${email} — ${plan === "free" ? "Free计划无Claude" : "试用已过期"}`,
+          _notifyWarn(
+            `WAM: 已拒绝 ${email} — ${
+              rejectFreeTier
+                ? "Free层无Claude"
+                : rejectFreePlan
+                  ? "Free计划无Claude"
+                  : rejectGraceExpired
+                    ? "试用宽限期已结束"
+                    : "试用已过期"
+            }`,
+            "fatal",
           );
           refreshAll();
           return;
@@ -2042,9 +2147,16 @@ class AccountStore {
         // 验证通过 → 清除未验证标记
         delete this.accounts[idx]._unverified;
         this.accounts[idx]._verifiedPlan = plan;
+        if (tier) this.accounts[idx]._verifiedTier = tier;
         this.save();
+        const tierTag = quota.teamsTierName
+          ? ` tier=${quota.teamsTierName}`
+          : "";
+        const paidTag = isPaidTier ? " ✓paid" : "";
+        const graceTag =
+          quota.gracePeriod > 1 ? ` grace=${quota.gracePeriodName}` : "";
         log(
-          `verify-gate: ${email} → 通过 (plan=${plan}, D${quota.daily}W${quota.weekly})`,
+          `verify-gate: ${email} → 通过 (plan=${plan}${tierTag}${paidTag}${graceTag}, D${quota.daily}W${quota.weekly})`,
         );
       } else {
         // v17.4 取证: 失败时印密码 hex 指纹 (便于排查是否仍有伪装字符漏网)
@@ -2088,8 +2200,9 @@ class AccountStore {
                 }
               })
               .catch(() => {});
-            vscode.window.showInformationMessage(
+            _notifyInfo(
               `WAM: ${email} 识别为 Devin-only 账号 — 已保护 (真实 Plan 后台获取中)`,
+              "auto",
             );
             refreshAll();
             return;
@@ -2113,12 +2226,14 @@ class AccountStore {
             this.accounts.splice(idx, 1);
             if (this.activeIndex === idx) this.activeIndex = -1;
             else if (this.activeIndex > idx) this.activeIndex--;
-            vscode.window.showWarningMessage(
-              `WAM: 已拒绝 ${email} — 登录失败连续3次(${quota.error})`,
+            _notifyWarn(
+              `WAM: 已拒绝 ${email} — 登录失败3次(${quota.error})`,
+              "fatal",
             );
           } else {
-            vscode.window.showWarningMessage(
+            _notifyWarn(
               `WAM: ${email} 验证失败 ${this.accounts[idx]._verifyFailedCount}/3 (${quota.error}) — 保留池中可重试`,
+              "auto",
             );
           }
           this.save();
@@ -2328,6 +2443,10 @@ class AccountStore {
     // v17.8 道法自然: getHealth 纯映射真实数据 · 不再虚造 _devin/_devinPerpetual 标志
     //   Devin 账号与普通账号同构 → 前端零分支判断
     //   身份识别仅留在后端 (acc._authSystem), 不泄漏到前端 Health 结构
+    // v17.42.4: 新增 teamsTier/gracePeriod/credits 三类字段 · 本源真数据透传 UI 与判定
+    const teamsTier = Number(u.teamsTier || 0);
+    const teamsTierName = u.teamsTierName || tierName(teamsTier);
+    const gracePeriod = Number(u.gracePeriod || 0);
     return {
       checked,
       daily: dr,
@@ -2344,6 +2463,19 @@ class AccountStore {
       weeklyResetIn,
       hasSnap: !!snap,
       weeklyUnknown,
+      // ═ v17.42.4 本源真数据 ═
+      teamsTier,
+      teamsTierName,
+      isDevin: !!u.isDevin,
+      hasPaidFeatures: !!u.hasPaidFeatures,
+      gracePeriod,
+      gracePeriodName: GRACE_PERIOD[gracePeriod] || null,
+      gracePeriodEnd: u.gracePeriodEnd || 0,
+      promptCredits: u.promptCredits || { used: 0, available: 0, monthly: 0 },
+      flowCredits: u.flowCredits || { used: 0, available: 0, monthly: 0 },
+      flexCredits: u.flexCredits || { used: 0, available: 0, monthly: 0 },
+      overageMicros: u.overageMicros || 0,
+      topUp: u.topUp || { enabled: false, monthly: 0, spent: 0, increment: 0 },
     };
   }
 
@@ -3064,6 +3196,89 @@ function _invalidateProxyCache() {
   _proxyDetectPromise = null;
 }
 
+// ── v17.42.6: 死代理 env 自净 — 反者道之动 · 太上不知有之 ──
+// 根因: 用户可能保留旧 HTTPS_PROXY env (如 192.168.31.141:17890) 指向已停机的代理
+//   ① _httpsPost/_httpsPostRaw 信任 _getSystemProxy() 返回 → 盲连死代理
+//   ② Node 22+ https.request 原生读 env.HTTPS_PROXY → _skipAutoProxy 挡不住
+//   ③ 新加账号 (无 session cache) 走 login → 四路全败 → verify-gate 标失败 → 无额度
+// 治法: 启动时 TCP 连通性验证 env proxy · 死则剔除 (仅此 Node 进程生效 · 不改系统)
+//   单次验证 2s timeout · 活的保留 · 死的删除 · 由 _detectProxy 重新 scan localhost 兜底
+function _tcpProbe(host, port, timeoutMs) {
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    let done = false;
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      try {
+        socket.destroy();
+      } catch {}
+      resolve(ok);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    socket.once("connect", () => {
+      clearTimeout(timer);
+      finish(true);
+    });
+    socket.once("error", () => {
+      clearTimeout(timer);
+      finish(false);
+    });
+    try {
+      socket.connect(port, host);
+    } catch {
+      finish(false);
+    }
+  });
+}
+
+async function _purgeDeadEnvProxy() {
+  const envKeys = [
+    "HTTPS_PROXY",
+    "https_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+  ];
+  const seen = new Map(); // "host:port" -> boolean (verified alive)
+  let purged = 0;
+  for (const key of envKeys) {
+    const val = process.env[key];
+    if (!val) continue;
+    let host, port;
+    try {
+      const u = new URL(val);
+      host = u.hostname;
+      port = parseInt(u.port) || (u.protocol === "https:" ? 443 : 80);
+    } catch {
+      const m = val.match(/^(?:https?:\/\/)?([^:\/]+):(\d+)/);
+      if (m) {
+        host = m[1];
+        port = parseInt(m[2]);
+      }
+    }
+    if (!host || !port) continue;
+    const k = `${host}:${port}`;
+    let alive;
+    if (seen.has(k)) {
+      alive = seen.get(k);
+    } else {
+      alive = await _tcpProbe(host, port, 2000);
+      seen.set(k, alive);
+    }
+    if (!alive) {
+      delete process.env[key];
+      purged++;
+      log(`env-proxy purge: ${key}=${val} (dead · TCP timeout/refused)`);
+    } else {
+      log(`env-proxy keep:  ${key}=${val} (TCP OK)`);
+    }
+  }
+  if (purged > 0) _invalidateProxyCache();
+  return purged;
+}
+
 // ── v15.1: Bridge就绪信号 + 自动确保 — 道法自然·有桥才走桥 ──
 // 根因修复: startup时webview不存在 → _nativeFetch全部no_webview → 所有native通道死
 // 修复策略:
@@ -3396,35 +3611,141 @@ function parseProtoFields(buf) {
   return { varints, messages };
 }
 
-// 从解析结果中提取D/W额度字段
-// v10.2 反者道之动: proto field 14/15 = remainingPercent (逆向实证)
-// 官方UI显示 usagePercent = 100 - remaining, 故: 官方0%=我们100, 官方100%=我们0
-// proto3零值省略: field absent = default = 0 = 剩余0% = 耗尽. 绝不镜像daily→weekly
+// ═════════════════════════════════════════════════════════════════════
+// v17.42.4 · 万法归宗 · PlanStatus proto schema (逆向 windsurf.com 本源)
+// ═════════════════════════════════════════════════════════════════════
+// 源: _webrev/chunks/47399-*.js (`exa.codeium_common_pb.PlanStatus` + `PlanInfo`)
+// 探针: _proto_deep_probe.js (proto + JSON 双通道交叉验证 · 18 字段对齐)
+//
+// 官方 PlanStatus 18 字段:
+//   1 plan_info (PlanInfo msg)    10 top_up_status (TopUpStatus msg)
+//   2 plan_start (Timestamp)      11 was_reduced_by_orphaned_usage (bool)
+//   3 plan_end   (Timestamp)      12 grace_period_status (enum 0-3)
+//   4 available_flex_credits      13 grace_period_end (Timestamp)
+//   5 used_flow_credits           14 daily_quota_remaining_percent (0-100)
+//   6 used_prompt_credits         15 weekly_quota_remaining_percent (0-100)
+//   7 used_flex_credits           16 overage_balance_micros (int64)
+//   8 available_prompt_credits    17 daily_quota_reset_at_unix (int64)
+//   9 available_flow_credits      18 weekly_quota_reset_at_unix (int64)
+// ─────────────────────────────────────────────────────────────────────
+const TEAMS_TIER = {
+  0: "UNSPECIFIED",
+  1: "TEAMS",
+  2: "PRO",
+  3: "ENTERPRISE_SAAS",
+  4: "HYBRID",
+  5: "ENTERPRISE_SELF_HOSTED",
+  6: "WAITLIST_PRO",
+  7: "TEAMS_ULTIMATE",
+  8: "PRO_ULTIMATE",
+  9: "TRIAL",
+  10: "ENTERPRISE_SELF_SERVE",
+  11: "ENTERPRISE_SAAS_POOLED",
+  12: "DEVIN_ENTERPRISE",
+  14: "DEVIN_TEAMS",
+  15: "DEVIN_TEAMS_V2",
+  16: "DEVIN_PRO",
+  17: "DEVIN_MAX",
+  18: "MAX",
+  19: "DEVIN_FREE",
+  20: "DEVIN_TRIAL",
+};
+const GRACE_PERIOD = {
+  0: "UNSPECIFIED",
+  1: "NONE",
+  2: "ACTIVE",
+  3: "EXPIRED",
+};
+// 付费层 · Claude 全量可用
+const _PAID_TIER_SET = new Set([
+  2, 3, 4, 5, 7, 8, 10, 11, 12, 14, 15, 16, 17, 18,
+]);
+// 试用层 · 有 plan_end + 可能进 grace period
+const _TRIAL_TIER_SET = new Set([9, 20]); // TRIAL, DEVIN_TRIAL
+// 免费层 · Claude 付费模型死刑
+const _FREE_TIER_SET = new Set([6, 19]); // WAITLIST_PRO, DEVIN_FREE
+function tierIsPaid(t) {
+  return _PAID_TIER_SET.has(Number(t));
+}
+function tierIsTrial(t) {
+  return _TRIAL_TIER_SET.has(Number(t));
+}
+function tierIsFree(t) {
+  return _FREE_TIER_SET.has(Number(t));
+}
+function tierName(t) {
+  return TEAMS_TIER[Number(t)] || null;
+}
+
+// ── 从解析结果中提取 PlanStatus 全字段 ─────────────────────────────
+// v10.2: proto field 14/15 = remainingPercent (官方UI显示 100-此值)
+// v17.42.4: 18 字段完整解析 + PlanInfo 嵌套 + Grace/TopUp/Overage · 本源对齐
 function _extractQuotaFields(v, msgs) {
-  const dailyR = v[14],
-    weeklyR = v[15],
-    used = v[6],
-    total = v[8],
-    dReset = v[17],
-    wReset = v[18];
+  // A) 百分比 · 0-100 (field 14/15)
+  const dailyR = v[14];
+  const weeklyR = v[15];
+  // B) 重置时间 · unix 秒 int64 (field 17/18)
+  const dReset = v[17];
+  const wReset = v[18];
+  // C) Credit 整数计数 (field 4-9) · proto3 absent=0
+  const usedPrompt = v[6] || 0;
+  const availPrompt = v[8] || 0;
+  const usedFlow = v[5] || 0;
+  const availFlow = v[9] || 0;
+  const usedFlex = v[7] || 0;
+  const availFlex = v[4] || 0;
+  // D) Grace period (field 12) · 0/1/2/3 enum
+  const gracePeriod = v[12] || 0;
+  // E) Overage 微美元 (field 16) · int64 varint
+  const overageMicros = v[16] || 0;
+  // F) Orphan 扣减 bool (field 11)
+  const orphanReduce = !!v[11];
+
+  // 基础有效性门控 (至少 2 个合理字段, 防止 relay wrapper 误读)
   let valid = 0;
   if (dailyR !== undefined && dailyR >= 0 && dailyR <= 100) valid++;
   if (weeklyR !== undefined && weeklyR >= 0 && weeklyR <= 100) valid++;
   if (dReset !== undefined && dReset > 1700000000) valid++;
   if (wReset !== undefined && wReset > 1700000000) valid++;
-  if (used !== undefined && used > 0 && used <= 10000) valid++;
-  if (total !== undefined && total > 0 && total <= 10000) valid++;
-  if (valid < 2) return null; // 至少2个有效字段才接受 (防relay单字段误读)
+  if (availPrompt > 0) valid++;
+  if (availFlow > 0) valid++;
+  if (msgs && msgs[1] && msgs[1].length > 2) valid++; // plan_info 存在
+  if (valid < 2) return null;
 
-  // v16根因修复: 提取plan名称
-  // 根因: PlanInfo是嵌套消息(F1.F1=plan_type enum, F1.F2=plan_name string)
-  // 旧代码尝试toString()整个子消息字节为UTF-8匹配计划名 — 必然失败(proto标签字节地址前缀导致正则不匹配)
-  // 修复: 先尝试旧格式兼容, 再解析msgs[1]为PlanInfo嵌套消息取F2字符串
-  let planName = null;
-  if (msgs) {
+  // G) PlanInfo 嵌套 (msgs[1]) · 30+ 字段取精华
+  let planName = null,
+    teamsTier = 0;
+  let monthlyPrompt = 0,
+    monthlyFlow = 0,
+    monthlyFlex = 0;
+  let isDevin = false,
+    isEnterprise = false,
+    isTeams = false;
+  let hasPaidFeatures = false,
+    canBuyMore = false;
+  if (msgs && msgs[1]) {
+    try {
+      const pi = parseProtoFields(msgs[1]);
+      teamsTier = pi.varints[1] || 0;
+      if (pi.messages[2]) {
+        const nm = pi.messages[2].toString("utf8").trim();
+        if (nm && nm.length <= 64 && /^[\x20-\x7E]+$/.test(nm)) planName = nm;
+      }
+      monthlyPrompt = pi.varints[12] || 0;
+      monthlyFlow = pi.varints[13] || 0;
+      monthlyFlex = pi.varints[14] || 0;
+      isEnterprise = !!pi.varints[16];
+      isTeams = !!pi.varints[17];
+      canBuyMore = !!pi.varints[18];
+      hasPaidFeatures = !!pi.varints[32];
+      isDevin = !!pi.varints[34];
+    } catch {}
+  }
+
+  // 旧格式字符串 fallback (API 偏移容错)
+  if (!planName && msgs) {
     const knownPlans =
       /^(free|pro_trial|pro|trial|enterprise|team|individual)$/i;
-    // 先尝试直接字符串匹配(旧API格式兼容)
     for (const fn of Object.keys(msgs)) {
       try {
         const str = msgs[fn].toString("utf8").trim();
@@ -3434,74 +3755,103 @@ function _extractQuotaFields(v, msgs) {
         }
       } catch {}
     }
-    // v16新: 解析msgs[1](PlanInfo嵌套消息) — 内层F2=plan_name字符串
-    // 根据逆向: F1.F1=type_enum, F1.F2=name_string
-    if (!planName && msgs[1] && msgs[1].length > 2) {
-      try {
-        const planMsgFields = parseProtoFields(msgs[1]);
-        if (planMsgFields.messages && planMsgFields.messages[2]) {
-          const str = planMsgFields.messages[2].toString("utf8").trim();
-          if (knownPlans.test(str)) planName = str;
-        }
-      } catch {}
+  }
+  // teamsTier → planName 兜底推导
+  if (!planName && teamsTier > 0) planName = tierName(teamsTier);
+
+  // H) Plan 起止时间 (msgs[2]/[3]) · 嵌套 Timestamp
+  let planStartUnix = 0,
+    planEndUnix = 0;
+  const _readTs = (buf) => {
+    try {
+      const f = parseProtoFields(buf);
+      const s = f.varints[1];
+      if (s && s > 1700000000 && s < 2100000000) return s;
+    } catch {}
+    return 0;
+  };
+  if (msgs && msgs[2]) planStartUnix = _readTs(msgs[2]);
+  if (msgs && msgs[3]) planEndUnix = _readTs(msgs[3]);
+  // 交叉验证区间合理性 (1-365 天)
+  if (planStartUnix && planEndUnix) {
+    const durDays = (planEndUnix - planStartUnix) / 86400;
+    if (planStartUnix >= planEndUnix || durDays > 365) {
+      log(
+        `planDate suspect: start=${new Date(planStartUnix * 1000).toISOString().slice(0, 10)} end=${new Date(planEndUnix * 1000).toISOString().slice(0, 10)} dur=${durDays.toFixed(1)}d → discard`,
+      );
+      planStartUnix = 0;
+      planEndUnix = 0;
     }
+  }
+
+  // I) Grace period end (msgs[13])
+  let gracePeriodEndUnix = 0;
+  if (msgs && msgs[13]) gracePeriodEndUnix = _readTs(msgs[13]);
+
+  // J) TopUpStatus (msgs[10])
+  let topUpEnabled = false,
+    monthlyTopUp = 0,
+    topUpSpent = 0,
+    topUpIncrement = 0;
+  if (msgs && msgs[10]) {
+    try {
+      const tu = parseProtoFields(msgs[10]);
+      topUpEnabled = !!tu.varints[2];
+      monthlyTopUp = tu.varints[3] || 0;
+      topUpSpent = tu.varints[4] || 0;
+      topUpIncrement = tu.varints[5] || 0;
+    } catch {}
   }
 
   const dailyVal =
     dailyR !== undefined && dailyR >= 0 && dailyR <= 100 ? dailyR : 0;
-
-  // v10.2 反者道之动: proto3 absent field = default value = 0 = 耗尽
-  // 根因: field 15缺失时旧版镜像daily→weekly, 将W0误读为W100 → 永不切号
-  // 实证: Daily 0% used + Weekly 100% used → field14=100, field15=absent(proto3零值省略)
-  // 旧逻辑 dReset===wReset → mirror daily=100 → WAM显示W100 → Quota Exhausted
-  // 修复: absent = 0, 不做任何假设性镜像. 若API真的D/W统一, field15会显式=field14
-  let weeklyVal;
-  if (weeklyR !== undefined && weeklyR >= 0 && weeklyR <= 100) {
-    weeklyVal = weeklyR;
-  } else {
-    weeklyVal = 0;
-  }
-
-  // 提取plan有效期时间戳: field 2 → planStart, field 3 → planEnd (嵌套message内field 1为unix秒)
-  // 官方实证: Trial = 14天 (如 Apr 1 - Apr 15, 2026)
-  let planStartUnix = 0,
-    planEndUnix = 0;
-  if (msgs) {
-    try {
-      if (msgs[2]) {
-        const sf = parseProtoFields(msgs[2]);
-        const ts = sf.varints[1];
-        if (ts && ts > 1700000000 && ts < 2100000000) planStartUnix = ts;
-      }
-      if (msgs[3]) {
-        const ef = parseProtoFields(msgs[3]);
-        const ts = ef.varints[1];
-        if (ts && ts > 1700000000 && ts < 2100000000) planEndUnix = ts;
-      }
-    } catch {}
-    // 交叉验证: planStart和planEnd应构成合理区间(1-365天)
-    if (planStartUnix && planEndUnix) {
-      const durDays = (planEndUnix - planStartUnix) / 86400;
-      if (planStartUnix >= planEndUnix || durDays > 365) {
-        log(
-          `planDate suspect: start=${new Date(planStartUnix * 1000).toISOString().slice(0, 10)} end=${new Date(planEndUnix * 1000).toISOString().slice(0, 10)} dur=${durDays.toFixed(1)}d → discard`,
-        );
-        planStartUnix = 0;
-        planEndUnix = 0;
-      }
-    }
-  }
+  const weeklyVal =
+    weeklyR !== undefined && weeklyR >= 0 && weeklyR <= 100 ? weeklyR : 0;
 
   return {
+    // ── 百分比 (向后兼容) ──
     daily: dailyVal,
     weekly: weeklyVal,
     dailyResetUnix: dReset && dReset > 1700000000 ? dReset : 0,
     weeklyResetUnix: wReset && wReset > 1700000000 ? wReset : 0,
-    creditsUsed: used && used > 0 && used <= 10000 ? used / 100 : 0,
-    creditsTotal: total && total > 0 && total <= 10000 ? total / 100 : 100,
+    // ── Plan 基础 (向后兼容) ──
     planName,
     planStartUnix,
     planEndUnix,
+    // ── v17.42.4 新增: 本源真数据 ──
+    teamsTier,
+    teamsTierName: tierName(teamsTier),
+    isDevin,
+    isEnterprise,
+    isTeams,
+    hasPaidFeatures,
+    canBuyMore,
+    // Credit 整数计数 (不再除 100 · 直接对齐官方 UI)
+    promptUsed: usedPrompt,
+    promptAvailable: availPrompt,
+    promptMonthly: monthlyPrompt,
+    flowUsed: usedFlow,
+    flowAvailable: availFlow,
+    flowMonthly: monthlyFlow,
+    flexUsed: usedFlex,
+    flexAvailable: availFlex,
+    flexMonthly: monthlyFlex,
+    // Grace period (官方过期状态 · 替代手算 planEnd>Date.now())
+    gracePeriod,
+    gracePeriodName: GRACE_PERIOD[gracePeriod] || null,
+    gracePeriodEndUnix,
+    // Overage / 其他
+    overageMicros,
+    orphanReduce,
+    // Top-up
+    topUpEnabled,
+    monthlyTopUp,
+    topUpSpent,
+    topUpIncrement,
+    // ── 兼容字段 (v17.42.4 语义修正 · 不再 /100) ──
+    // 老字段 creditsUsed/Total 现在 = 真实整数 (prompt credits 计数)
+    creditsUsed: usedPrompt,
+    creditsTotal: monthlyPrompt || usedPrompt + availPrompt || 0,
   };
 }
 
@@ -3527,21 +3877,41 @@ function parsePlanStatus(buf) {
   const top = parseProtoFields(pb);
 
   // ── 关键策略: 深层优先 ──
-  // relay可能在自己的wrapper消息中有field 14/15(非D/W), 导致L2误读
-  // 所以: 有wrapper(field 1)时, 优先解析内层(L3/L4), L2仅做fallback
+  // GetPlanStatusResponse 顶层 field 1 = plan_status (PlanStatus msg)
+  // field 2 = team_used_prompt_credits (int64)
+  // relay 可能在 field 1 外再包一层 wrapper, 所以 L3/L4 深度优先
 
   // ── 层3/4: 优先解析wrapper内部 (v9.3: 强化验证 — 要求D/W+至少一个reset字段) ──
-  // 根因: relay wrapper自身的metadata字段可能恰好在field 14-15范围内, 导致误读
-  // 修复: L3/L4结果必须同时有field 14(daily)和field 17或18(reset时间)才接受
   const _hasResetField = (v) =>
     (v[17] && v[17] > 1700000000) || (v[18] && v[18] > 1700000000);
+  // v17.42.4: 日志带上 tier/grace/credits 三项 · 诊断颗粒度倍增
+  const _fmtLog = (lvl, r) => {
+    const bits = [`proto ${lvl}: D${r.daily} W${r.weekly}`];
+    if (r.planName) bits.push(`plan=${r.planName}`);
+    if (r.teamsTierName) bits.push(`tier=${r.teamsTierName}`);
+    if (r.gracePeriod && r.gracePeriod > 1)
+      bits.push(`grace=${r.gracePeriodName}`);
+    if (r.promptMonthly || r.promptAvailable)
+      bits.push(
+        `prompt=${r.promptUsed}/${r.promptMonthly || r.promptUsed + r.promptAvailable}`,
+      );
+    if (r.flowMonthly || r.flowAvailable)
+      bits.push(
+        `flow=${r.flowUsed}/${r.flowMonthly || r.flowUsed + r.flowAvailable}`,
+      );
+    if (r.planEndUnix)
+      bits.push(
+        `end=${new Date(r.planEndUnix * 1000).toISOString().slice(0, 10)}`,
+      );
+    if (r.overageMicros)
+      bits.push(`overage=$${(Number(r.overageMicros) / 1e6).toFixed(2)}`);
+    return bits.join(" ");
+  };
   if (top.messages[1] && top.messages[1].length > 10) {
     const inner = parseProtoFields(top.messages[1]);
     let result = _extractQuotaFields(inner.varints, inner.messages);
     if (result && _hasResetField(inner.varints)) {
-      log(
-        `proto L3: D${result.daily} W${result.weekly}${result.planName ? " plan=" + result.planName : ""}${result.planEndUnix ? " end=" + new Date(result.planEndUnix * 1000).toISOString().slice(0, 10) : ""} env=${stripped} ${pb.length}B`,
-      );
+      log(`${_fmtLog("L3", result)} env=${stripped} ${pb.length}B`);
       return result;
     } else if (result) {
       log(
@@ -3553,9 +3923,7 @@ function parsePlanStatus(buf) {
       const deep = parseProtoFields(inner.messages[1]);
       result = _extractQuotaFields(deep.varints, deep.messages);
       if (result && _hasResetField(deep.varints)) {
-        log(
-          `proto L4: D${result.daily} W${result.weekly}${result.planName ? " plan=" + result.planName : ""}${result.planEndUnix ? " end=" + new Date(result.planEndUnix * 1000).toISOString().slice(0, 10) : ""} env=${stripped} ${pb.length}B`,
-        );
+        log(`${_fmtLog("L4", result)} env=${stripped} ${pb.length}B`);
         return result;
       } else if (result) {
         log(
@@ -3566,11 +3934,10 @@ function parsePlanStatus(buf) {
   }
 
   // ── 层2: fallback — 仅当没有wrapper时才用顶层字段 ──
-  // (response经envelope剥离后直接是Codeium protobuf, 无relay wrapper)
   let result = _extractQuotaFields(top.varints, top.messages);
   if (result) {
     log(
-      `proto L2: D${result.daily} W${result.weekly}${result.planEndUnix ? " end=" + new Date(result.planEndUnix * 1000).toISOString().slice(0, 10) : ""} env=${stripped} ${pb.length}B b0=0x${buf[0].toString(16)}`,
+      `${_fmtLog("L2", result)} env=${stripped} ${pb.length}B b0=0x${buf[0].toString(16)}`,
     );
     return result;
   }
@@ -3731,82 +4098,120 @@ async function _devinLogin(email, password) {
   const url = _getDevinLoginUrl();
   const urlOrigin = _deriveOrigin(url);
   const payload = JSON.stringify({ email, password });
+  // v17.42.3 反者道之动: 匹配官网 fetch("/_devin-auth/password/login") 的完整 header
+  // 逆向 chunks/1635-5df1cbfb398b94c8.js (function h) 与 chunks/46097 (Firebase config)
+  // 同源 fetch 自带 Origin/Referer, 扩展必须显式补齐, 否则 Cloudflare WAF 可能降级
   const headers = {
     "Content-Type": "application/json",
+    Accept: "application/json, text/plain, */*",
+    Origin: urlOrigin,
     Referer: `${urlOrigin}/account/login`,
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
   };
-  // 复用 Firebase 三通道架构: native > proxy > direct
+  // v17.42.3: 重构三路 — 道法自然·四路归一
+  //   ① direct-auto: 不 _skipAutoProxy, 让 _httpsPost 自动感知 VSCode http.proxy / env / registry
+  //      根治: 用户 VSCode 代理仅此路能感知 (env/registry 可能空, native CORS 永拒)
+  //   ② proxy-explicit: _detectProxy → _httpsViaProxy CONNECT 隧道
+  //   ③ direct-raw: _skipAutoProxy 硬直连 (网络对 windsurf.com 无阻时最快)
+  //   ④ native: webview fetch (多数环境 CORS 会拒, 仅作末路)
   const channels = [
-    async () => {
-      const r = await _nativeFetch(url, {
-        method: "POST",
-        headers,
-        body: payload,
-        timeout: 12000,
-      });
-      if (typeof r.data !== "string") throw new Error("devin_native_no_data");
-      return { status: r.status, text: r.data };
+    {
+      n: "direct-auto",
+      fn: async () => {
+        const r = await _httpsPost(url, payload, { timeout: 10000, headers });
+        return { status: 200, text: JSON.stringify(r || {}) };
+      },
     },
-    async () => {
-      const proxy = await _detectProxy();
-      if (!proxy) throw new Error("no_proxy");
-      const r = await _httpsViaProxy(
-        proxy.host,
-        proxy.port,
-        url,
-        payload,
-        10000,
-        headers,
-      );
-      // _httpsViaProxy 已返回 parsed JSON; 转为统一形状
-      return { status: 200, text: JSON.stringify(r || {}) };
+    {
+      n: "proxy",
+      fn: async () => {
+        const proxy = await _detectProxy();
+        if (!proxy) throw new Error("no_proxy");
+        const r = await _httpsViaProxy(
+          proxy.host,
+          proxy.port,
+          url,
+          payload,
+          10000,
+          headers,
+        );
+        return { status: 200, text: JSON.stringify(r || {}) };
+      },
     },
-    async () => {
-      // v17.35: _skipAutoProxy 确保 direct 通道真正直连 (windsurf.com 不需要代理)
-      const r = await _httpsPost(url, payload, {
-        timeout: 8000,
-        headers,
-        _skipAutoProxy: true,
-      });
-      return { status: 200, text: JSON.stringify(r || {}) };
+    {
+      n: "direct-raw",
+      fn: async () => {
+        const r = await _httpsPost(url, payload, {
+          timeout: 8000,
+          headers,
+          _skipAutoProxy: true,
+        });
+        return { status: 200, text: JSON.stringify(r || {}) };
+      },
+    },
+    {
+      n: "native",
+      fn: async () => {
+        const r = await _nativeFetch(url, {
+          method: "POST",
+          headers,
+          body: payload,
+          timeout: 12000,
+        });
+        if (typeof r.data !== "string") throw new Error("devin_native_no_data");
+        return { status: r.status, text: r.data };
+      },
     },
   ];
+  // v17.42.3: 捕获每路错误到具名 map, 而非仅信 Promise.any.errors[0]
+  const perCh = {};
   try {
     const result = await Promise.any(
-      channels.map((ch) =>
-        ch().then((r) => {
-          let j = null;
-          try {
-            j = typeof r.text === "string" ? JSON.parse(r.text) : r.text;
-          } catch {
-            throw new Error("devin_parse_error");
-          }
-          if (j && j.token && j.user_id) {
-            return {
-              ok: true,
-              auth1Token: j.token,
-              userId: j.user_id,
-              email: j.email,
-            };
-          }
-          // 200 但无 token: 密码错或 email 不存在
-          const err = (j && (j.error || j.message)) || "devin_no_token";
-          throw new Error(err);
-        }),
+      channels.map(({ n, fn }) =>
+        fn()
+          .then((r) => {
+            let j = null;
+            try {
+              j = typeof r.text === "string" ? JSON.parse(r.text) : r.text;
+            } catch {
+              throw new Error("devin_parse_error");
+            }
+            if (j && j.token && j.user_id) {
+              log(`_devinLogin ch[${n}]: OK`);
+              return {
+                ok: true,
+                auth1Token: j.token,
+                userId: j.user_id,
+                email: j.email,
+                viaChannel: n,
+              };
+            }
+            // 200/401 但无 token: 密码错 / email 不存在 / 账号禁用 — 业务级 permanent 错
+            // v17.42.3: 按网页源码 (chunks/1635 function h) 优先读 j.detail (windsurf.com 401 返回格式)
+            const err =
+              (j && (j.detail || j.error || j.message)) || "devin_no_token";
+            throw new Error(err);
+          })
+          .catch((e) => {
+            perCh[n] = (e && e.message) || String(e);
+            throw e;
+          }),
       ),
     );
     return result;
   } catch (aggErr) {
-    // v17.35: 详细通道错误日志 (native/proxy/direct 分别报告)
-    const errs = aggErr?.errors || [];
-    const chNames = ["native", "proxy", "direct"];
-    for (let i = 0; i < errs.length; i++) {
-      log(`_devinLogin ch[${chNames[i] || i}]: ${errs[i]?.message || errs[i]}`);
+    for (const [n, m] of Object.entries(perCh))
+      log(`_devinLogin ch[${n}]: ${m}`);
+    // v17.42.3: 先挑业务级永久错 (INVALID/NOT_FOUND/USER_DISABLED 等 — 任一通道拿到)
+    const permanentPat = /invalid|not[\s_-]?found|disabled|wrong|email/i;
+    for (const [n, m] of Object.entries(perCh)) {
+      if (permanentPat.test(m)) return { ok: false, error: m, viaChannel: n };
     }
-    const msg =
-      (errs[0] && errs[0].message) ||
-      String(aggErr && aggErr.message ? aggErr.message : aggErr);
-    return { ok: false, error: msg };
+    const combined = Object.entries(perCh)
+      .map(([n, m]) => `${n}:${m}`)
+      .join(" | ");
+    return { ok: false, error: combined || "devin_all_failed" };
   }
 }
 
@@ -4232,13 +4637,16 @@ async function fetchAccountQuota(email, password) {
       }
     }
   };
+  // v17.42.5 反者道之动 · 认证本源化:
+  //   删除"Devin 失败 → Firebase 成功 → 自动标记 firebase"路径
+  //   原因: 该标记让账号下次落入 Firebase-first 轨道 (4s 超时浪费 · 偏离官网本源)
+  //   新法: Firebase 仍作为当次 fallback, 但不做持久化标记
+  //          账号 _authSystem 保持 undefined → 下次仍 Devin-first (符合 windsurf.com 官方路径)
+  //          只有 Devin 链路全链路通才标记 devin (既有 _persistDevinMark)
+  //          只有用户显式设置 _authSystem='firebase' 才走 Firebase-first (legacy opt-in)
   const _persistFirebaseMark = () => {
-    if (!acc || acc._authSystem === "firebase") return;
-    acc._authSystem = "firebase";
-    try {
-      _store.save();
-      log(`fetchQuota: ${email} 🌊 首次标记 firebase · 已持久化`);
-    } catch {}
+    // No-op · 保留 helper 以防回滚 · 不再自动标记
+    // 用户显式标记仍通过 acc._authSystem='firebase' 设置 (不经此路径)
   };
 
   if (goDevinFirst) {
@@ -4526,14 +4934,109 @@ function _updateAccountUsage(email, quota) {
       const pe = quota.planEndUnix ? quota.planEndUnix * 1000 : 0;
       return pe || prev.planEnd || 0;
     })(),
+    planStart: (() => {
+      const ps = quota.planStartUnix ? quota.planStartUnix * 1000 : 0;
+      return ps || prev.planStart || 0;
+    })(),
     // 重置时间: API值 > 计算值 > 旧值
     resetTime: apiDailyReset || calcDailyReset || prev.resetTime || 0,
     weeklyReset: effectiveWeeklyReset,
     lastChecked: now,
     // 额外追踪: credits数据 + 有效配额
     creditsUsed: quota.creditsUsed || prev.creditsUsed || 0,
-    creditsTotal: quota.creditsTotal || prev.creditsTotal || 100,
+    creditsTotal: quota.creditsTotal || prev.creditsTotal || 0,
     effective: Math.min(quota.daily, effectiveWeekly),
+    // ═══ v17.42.4 · 本源真数据 (逆向 windsurf.com PlanStatus 18字段) ═══
+    // TeamsTier enum (0-20) · 精确区分 PRO/DEVIN_PRO/TRIAL/DEVIN_TRIAL/FREE 等 21 种
+    teamsTier:
+      quota.teamsTier !== undefined && quota.teamsTier !== null
+        ? quota.teamsTier
+        : prev.teamsTier || 0,
+    teamsTierName: quota.teamsTierName || prev.teamsTierName || null,
+    // isDevin 标记 · 用于 UI 徽章 + 分支逻辑
+    isDevin: quota.isDevin !== undefined ? !!quota.isDevin : !!prev.isDevin,
+    hasPaidFeatures:
+      quota.hasPaidFeatures !== undefined
+        ? !!quota.hasPaidFeatures
+        : !!prev.hasPaidFeatures,
+    // Grace period 官方状态 (0=unspec 1=none 2=active 3=expired)
+    gracePeriod:
+      quota.gracePeriod !== undefined
+        ? quota.gracePeriod
+        : prev.gracePeriod || 0,
+    gracePeriodEnd: quota.gracePeriodEndUnix
+      ? quota.gracePeriodEndUnix * 1000
+      : prev.gracePeriodEnd || 0,
+    // Credits 三类 · 整数计数 · 直接对齐官方 UI 显示
+    promptCredits: {
+      used:
+        typeof quota.promptUsed === "number"
+          ? quota.promptUsed
+          : (prev.promptCredits && prev.promptCredits.used) || 0,
+      available:
+        typeof quota.promptAvailable === "number"
+          ? quota.promptAvailable
+          : (prev.promptCredits && prev.promptCredits.available) || 0,
+      monthly:
+        typeof quota.promptMonthly === "number" && quota.promptMonthly > 0
+          ? quota.promptMonthly
+          : (prev.promptCredits && prev.promptCredits.monthly) || 0,
+    },
+    flowCredits: {
+      used:
+        typeof quota.flowUsed === "number"
+          ? quota.flowUsed
+          : (prev.flowCredits && prev.flowCredits.used) || 0,
+      available:
+        typeof quota.flowAvailable === "number"
+          ? quota.flowAvailable
+          : (prev.flowCredits && prev.flowCredits.available) || 0,
+      monthly:
+        typeof quota.flowMonthly === "number" && quota.flowMonthly > 0
+          ? quota.flowMonthly
+          : (prev.flowCredits && prev.flowCredits.monthly) || 0,
+    },
+    flexCredits: {
+      used:
+        typeof quota.flexUsed === "number"
+          ? quota.flexUsed
+          : (prev.flexCredits && prev.flexCredits.used) || 0,
+      available:
+        typeof quota.flexAvailable === "number"
+          ? quota.flexAvailable
+          : (prev.flexCredits && prev.flexCredits.available) || 0,
+      monthly:
+        typeof quota.flexMonthly === "number" && quota.flexMonthly > 0
+          ? quota.flexMonthly
+          : (prev.flexCredits && prev.flexCredits.monthly) || 0,
+    },
+    overageMicros:
+      typeof quota.overageMicros === "number" ||
+      typeof quota.overageMicros === "bigint"
+        ? Number(quota.overageMicros)
+        : prev.overageMicros || 0,
+    topUp: {
+      enabled:
+        quota.topUpEnabled !== undefined
+          ? !!quota.topUpEnabled
+          : (prev.topUp && prev.topUp.enabled) || false,
+      monthly:
+        typeof quota.monthlyTopUp === "number"
+          ? quota.monthlyTopUp
+          : (prev.topUp && prev.topUp.monthly) || 0,
+      spent:
+        typeof quota.topUpSpent === "number"
+          ? quota.topUpSpent
+          : (prev.topUp && prev.topUp.spent) || 0,
+      increment:
+        typeof quota.topUpIncrement === "number"
+          ? quota.topUpIncrement
+          : (prev.topUp && prev.topUp.increment) || 0,
+    },
+    orphanReduce:
+      quota.orphanReduce !== undefined
+        ? !!quota.orphanReduce
+        : !!prev.orphanReduce,
   };
 }
 
@@ -5142,7 +5645,7 @@ async function verifyAndPurgeExpired(store, opts = {}) {
   const msg = `验证完成: ${pwAccounts.length}个账号, 剔除${purgedCount}个 (${loginDead}登录失败, ${disabled}禁用, ${probeFree}Free无Claude, ${expiredTrial}试用过期)`;
   log(`purge: ${msg}`);
   if (!silent) {
-    vscode.window.showInformationMessage(`WAM: ${msg}`);
+    _notifyInfo(`WAM: ${msg}`, "user");
     refreshAll();
   }
 
@@ -5473,16 +5976,18 @@ async function switchToAccount(email, password) {
               },
             ]);
             _store.remove(idx);
-            vscode.window.showWarningMessage(
+            _notifyWarn(
               `WAM: 已归档无效账号 ${email} (${err})连续3次，可用 "WAM: 从归档恢复" 找回`,
+              "fatal",
             );
           } else {
             log(
               `switch: ${email} 登录失败 ${deadAcc._switchFailedCount}/3 (${err}), 保留`,
             );
             _store.save();
-            vscode.window.showWarningMessage(
+            _notifyWarn(
               `WAM: ${email} 登录失败 ${deadAcc._switchFailedCount}/3 (${err}) — 保留池中`,
+              "auto",
             );
           }
         }
@@ -6194,8 +6699,9 @@ async function _autoUpdateCheck(manual = false) {
 
     log(`autoUpdate: ✓ 更新到 v${remoteVer} · 下次重载 Windsurf 自动生效`);
     if (_getAutoUpdateNotifyUser() || manual) {
-      vscode.window.showInformationMessage(
+      _notifyInfo(
         `WAM 已更新到 v${remoteVer} (当前进程 v${localVer}) · 下次重启 Windsurf 自动生效`,
+        manual ? "user" : "auto",
       );
     }
     _autoUpdateLastResult = {
@@ -6350,6 +6856,110 @@ function _stopTokenPool() {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// v17.42.5 · 太上不知有之 · 活跃号 idToken 守护线程
+// ═══════════════════════════════════════════════════════════════════
+// 对齐 windsurf.com 本源: 官网 idToken 10min 过期
+// pool 的 margin 是 10min · 活跃号若在切换 cascade 对话中, 10min 内也可能命中
+// 守护线程每 60s 检查活跃号, 剩余 < 2min 就主动刷新 · 用户永不因 token 过期卡顿
+//
+// 开销: 1 账号 × 每分钟 1 次存在性检查 · 仅当 < 2min 才触发 HTTPS · 近零开销
+// ─────────────────────────────────────────────────────────────────
+let _activeTokenGuardTimer = null;
+async function _activeTokenGuardTick() {
+  try {
+    if (!_store || !isWamMode() || _switching) return;
+    const activeI = _store.activeIndex;
+    if (activeI < 0) return;
+    const acc = _store.accounts[activeI];
+    if (!acc || !acc.password) return;
+    const ek = acc.email.toLowerCase();
+    const isDevin = acc._authSystem === "devin";
+    const cached = isDevin ? _getDevinCached(ek) : _tokenCache.get(ek);
+    const remainMs = cached ? cached.expiresAt - Date.now() : -1;
+    // 官网 10min 过期 · 我们剩余 < 2min 就提前刷新
+    const GUARD_MARGIN_MS = 2 * 60 * 1000;
+    if (cached && remainMs > GUARD_MARGIN_MS) return; // 充足, 无需介入
+    const shortTag = acc.email.substring(0, 20);
+    log(
+      `🛡️ active-guard: ${shortTag} token ${cached ? `${Math.round(remainMs / 1000)}s` : "missing"} → refresh (${isDevin ? "Devin" : "Firebase"})`,
+    );
+    if (isDevin) {
+      const r = await _devinFullSwitch(acc.email, acc.password, {
+        forceRefresh: true,
+      });
+      if (r && r.ok) {
+        acc._devinSessionAt = Date.now();
+        log(`🛡️ active-guard: ${shortTag} ✓ Devin session refreshed`);
+      } else {
+        log(
+          `🛡️ active-guard: ${shortTag} ✗ Devin refresh (${r && r.stage}/${r && r.error})`,
+        );
+      }
+    } else {
+      const lr = await firebaseLogin(acc.email, acc.password);
+      if (lr.ok) {
+        _tokenCache.set(ek, {
+          idToken: lr.idToken,
+          expiresAt: Date.now() + _getTokenCacheTtl(),
+        });
+        _tokenCacheDirty = true;
+        log(`🛡️ active-guard: ${shortTag} ✓ Firebase token refreshed`);
+      } else {
+        log(`🛡️ active-guard: ${shortTag} ✗ Firebase refresh (${lr.error})`);
+      }
+    }
+  } catch (e) {
+    log(`active-guard error: ${e.message}`);
+  }
+}
+function _startActiveTokenGuardian() {
+  if (_activeTokenGuardTimer) return;
+  _activeTokenGuardTimer = setInterval(_activeTokenGuardTick, 60 * 1000); // 每分钟
+  // 启动 10s 后首次触发 (避免与 pool 冲刺期重叠)
+  setTimeout(() => _activeTokenGuardTick(), 10 * 1000);
+  log(
+    "engine: active-token guardian started (60s cycle · 2min margin · 对齐官网 10min 过期)",
+  );
+}
+function _stopActiveTokenGuardian() {
+  if (_activeTokenGuardTimer) {
+    clearInterval(_activeTokenGuardTimer);
+    _activeTokenGuardTimer = null;
+    log("engine: active-token guardian stopped");
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// v17.42.5 · 太上不知有之 · Cascade 流式避让
+// ═══════════════════════════════════════════════════════════════════
+// 原理: _msgAnchor.lastSendTs 是最近 cascade 发送的时间戳 (path A/B/C/E 共用)
+// 流式响应期间, path C (cascade .pb file) 会持续写入 → lastSendTs 持续更新
+// 2s 内有更新即视为"流式进行中" · 切号推迟 1s 重试 · 总等待上限 15s
+//
+// 道法自然: 让流完成再切 · 用户对话永不断裂
+// 披褐怀玉: 15s 极限后强切 (避免无限卡住 · 保护后台进度)
+// ─────────────────────────────────────────────────────────────────
+function _isCascadeStreaming(windowMs = 2000) {
+  const lastSend = _msgAnchor && _msgAnchor.lastSendTs;
+  if (!lastSend) return false;
+  return Date.now() - lastSend < windowMs;
+}
+async function _waitIfCascadeBusy(maxWaitMs = 15000, checkIntervalMs = 1000) {
+  const start = Date.now();
+  let waited = 0;
+  while (_isCascadeStreaming(2000) && Date.now() - start < maxWaitMs) {
+    await new Promise((r) => setTimeout(r, checkIntervalMs));
+    waited += checkIntervalMs;
+  }
+  if (waited > 0) {
+    log(
+      `⏸️ cascade-avoid: waited ${waited}ms · streaming ${_isCascadeStreaming(2000) ? "still ongoing (forced)" : "completed"}`,
+    );
+  }
+  return waited;
+}
+
 // ============================================================
 // 实时额度监测引擎 — 反者道之动
 // 活跃账号快速监测(3s) + 全量后台扫描(45s)
@@ -6428,6 +7038,8 @@ function _ensureEngines() {
   }
   // v12: 永续Token活水池
   _startTokenPool();
+  // v17.42.5 太上不知有之: 活跃号 idToken 守护线程 · 对齐官网 10min 过期节奏
+  _startActiveTokenGuardian();
   // v17.10 太上·不知有之: 自动更新 (默认启用·无 source 时 no-op)
   _startAutoUpdate();
   // v17.12 太上·不知有之: UI 按钮完全内化 (用户无感·后台自运行)
@@ -6440,6 +7052,7 @@ function _ensureEngines() {
 
 function _stopEngines() {
   _stopTokenPool(); // v12
+  _stopActiveTokenGuardian(); // v17.42.5
   _stopAutoUpdate(); // v17.10
   _stopAutoVerify(); // v17.12
   _stopAutoExpiry(); // v17.12
@@ -6582,6 +7195,8 @@ async function monitorActiveQuota() {
             _switching = true;
             _switchingStartTime = Date.now();
             try {
+              // v17.42.5 太上不知有之: cascade 流式避让 · 对话永不被打断
+              await _waitIfCascadeBusy(15000);
               // 自动重试 — 登录失败后尝试下一个号(最多3次)
               let switchOk = false;
               for (let _retry = 0; _retry < 3 && !switchOk; _retry++) {
@@ -6609,8 +7224,9 @@ async function monitorActiveQuota() {
                     _prewarmCandidateToken(_predictiveCandidate);
                   }
                   setTimeout(() => monitorActiveQuota(), 1500);
-                  vscode.window.showInformationMessage(
+                  _notifyInfo(
                     `WAM: 消息锚定 → 已切换到 ${switchResult.account}`,
+                    "auto",
                   );
                   refreshAll();
                   switchOk = true;
@@ -6738,6 +7354,8 @@ async function monitorActiveQuota() {
             _switching = true;
             _switchingStartTime = Date.now();
             try {
+              // v17.42.5 太上不知有之: cascade 流式避让 · 对话永不被打断
+              await _waitIfCascadeBusy(15000);
               // 自动重试 — 登录失败后尝试下一个号(最多3次)
               let switchOk = false;
               for (let _retry = 0; _retry < 3 && !switchOk; _retry++) {
@@ -6760,9 +7378,7 @@ async function monitorActiveQuota() {
                     _prewarmCandidateToken(_predictiveCandidate);
                   _burstUntil = Date.now() + _getBurstDuration();
                   setTimeout(() => monitorActiveQuota(), 1500);
-                  vscode.window.showInformationMessage(
-                    `WAM: ${reason} → 切换到 ${sr.account}`,
-                  );
+                  _notifyInfo(`WAM: ${reason} → 切换到 ${sr.account}`, "auto");
                   refreshAll();
                   switchOk = true;
                 } else if (sr.error && /登录失败/.test(sr.error)) {
@@ -6806,7 +7422,7 @@ async function monitorActiveQuota() {
             }
           } else {
             log(`耗尽保护: ${reason}, 无可用账号`);
-            vscode.window.showWarningMessage(`WAM: ${reason}，无空闲账号`);
+            _notifyWarn(`WAM: ${reason}，无空闲账号`, "auto");
           }
         }
       }
@@ -7046,7 +7662,7 @@ async function scanMissingExpiry() {
   _expiryScanning = false;
   const msg = `有效期刷新完成: ${targets.length}个目标, ${fetched}成功, ${failed}失败`;
   log(`scanExpiry: ${msg}`);
-  vscode.window.showInformationMessage(`WAM: ${msg}`);
+  _notifyInfo(`WAM: ${msg}`, "user");
   refreshAll();
   return { scanned: targets.length, fetched, failed };
 }
@@ -7063,6 +7679,21 @@ function updateStatusBar() {
   const activeAcc =
     _store.activeIndex >= 0 ? _store.get(_store.activeIndex) : null;
   const inUseCount = _store._inUse.size;
+  // v17.42.5 太上不知有之 · 无感模式状态栏极简
+  // 披褐怀玉: 表面只剩一个 $(zap) N 外衣, 怀全链路功能内丹 · 用户"不知有之"
+  if (_isInvisibleMode()) {
+    _statusBarItem.text = `$(zap) ${s.pwCount}`;
+    const activeTag = activeAcc
+      ? ` · ${activeAcc.email.substring(0, 16)}`
+      : " · 未选";
+    _statusBarItem.tooltip =
+      `WAM v${WAM_VERSION} · 无感模式 (太上不知有之)${activeTag}\n` +
+      `池: ${s.available}/${s.pwCount}可用 · ${s.exhausted}耗尽 · ${s.waiting}待\n` +
+      `切换: ${s.switches}次 · 监测: ${_totalMonitorCycles}轮\n` +
+      `日重置: ${s.hrsToDaily.toFixed(1)}h · 周重置: ${s.hrsToWeekly.toFixed(1)}h\n` +
+      `(侧栏可查看详情 · 设置 wam.invisible=false 可退出无感模式)`;
+    return;
+  }
   const droughtTag = s.drought ? "[旱]" : "";
   if (activeAcc) {
     const h = _store.getHealth(activeAcc);
@@ -7109,9 +7740,7 @@ async function handleWebviewMessage(msg) {
       // 手动切号: 无任何限制 (不检查in-use)
       // 官方模式下不自动翻转
       if (_mode === "official") {
-        vscode.window.showWarningMessage(
-          "WAM: 官方模式下无法切号，请先切回WAM模式",
-        );
+        _notifyWarn("WAM: 官方模式下无法切号，请先切回WAM模式", "user");
         return;
       }
       const acc = _store.get(msg.index);
@@ -7120,8 +7749,9 @@ async function handleWebviewMessage(msg) {
       if (_switching) {
         const lockAge = Date.now() - _switchingStartTime;
         if (lockAge < 30000) {
-          vscode.window.showWarningMessage(
+          _notifyWarn(
             `WAM: 正在切换中(${Math.round(lockAge / 1000)}s)...请稍候`,
+            "user",
           );
           return;
         }
@@ -7144,12 +7774,13 @@ async function handleWebviewMessage(msg) {
           _snapshotDirty = true;
           _schedulePersist();
           _store.save();
-          vscode.window.showInformationMessage(
+          _notifyInfo(
             `WAM: 已手动切换到 ${result.account} (${result.ms}ms)`,
+            "user",
           );
           _ensureEngines();
         } else {
-          vscode.window.showErrorMessage(`WAM: 切换失败 — ${result.error}`);
+          _notifyError(`WAM: 切换失败 — ${result.error}`);
         }
       } finally {
         _switching = false;
@@ -7180,7 +7811,7 @@ async function handleWebviewMessage(msg) {
       );
       if (pick === "确认删除") {
         const n = _store.removeBatch(msg.indices);
-        vscode.window.showInformationMessage(`WAM: 已删除 ${n} 个账号`);
+        _notifyInfo(`WAM: 已删除 ${n} 个账号`, "user");
         refreshAll();
       }
       break;
@@ -7190,15 +7821,10 @@ async function handleWebviewMessage(msg) {
       let info = `WAM: 添加了 ${r.added} 个账号`;
       if (r.duplicate > 0) info += ` (${r.duplicate}个重复)`;
       if (r.skipped > 0) info += ` (${r.skipped}个无法识别)`;
-      if (r.added > 0) vscode.window.showInformationMessage(info);
+      if (r.added > 0) _notifyInfo(info, "user");
       else if (r.duplicate > 0)
-        vscode.window.showWarningMessage(
-          `WAM: ${r.duplicate}个账号已存在，无新增`,
-        );
-      else
-        vscode.window.showWarningMessage(
-          `WAM: 无法识别格式，请检查输入 (${r.total}行)`,
-        );
+        _notifyWarn(`WAM: ${r.duplicate}个账号已存在，无新增`, "user");
+      else _notifyWarn(`WAM: 无法识别格式，请检查输入 (${r.total}行)`, "user");
       refreshAll();
       break;
     }
@@ -7211,9 +7837,7 @@ async function handleWebviewMessage(msg) {
     case "autoRotate": {
       // 官方模式下智能轮转被禁用(UI按钮也已disabled)
       if (!isWamMode()) {
-        vscode.window.showWarningMessage(
-          "WAM: 官方模式下智能轮转已禁用，请先切回WAM模式",
-        );
+        _notifyWarn("WAM: 官方模式下智能轮转已禁用，请先切回WAM模式", "user");
         break;
       }
       await doAutoRotate(_store);
@@ -7254,9 +7878,7 @@ async function handleWebviewMessage(msg) {
     }
     // v17.36 · setOrigin / setCombo 已剥离 · WAM 纯切号
     case "setOrigin": {
-      vscode.window.showInformationMessage(
-        "WAM: 道Agent 功能已移至 020-道VSIX_DaoAgi",
-      );
+      _notifyInfo("WAM: 道Agent 功能已移至 020-道VSIX_DaoAgi", "user");
       break;
     }
     case "setCombo": {
@@ -7265,16 +7887,14 @@ async function handleWebviewMessage(msg) {
         if (msg.kind === "dao") {
           saveMode("wam");
           _restartBackgroundServices();
-          vscode.window.showInformationMessage("WAM: WAM切号模式 已生效");
+          _notifyInfo("WAM: WAM切号模式 已生效", "user");
         } else if (msg.kind === "pure") {
           saveMode("official");
           const cleaned = await cleanupThirdPartyState();
-          vscode.window.showInformationMessage(
-            `WAM: 官方登录模式 已生效 (清 ${cleaned} 项)`,
-          );
+          _notifyInfo(`WAM: 官方登录模式 已生效 (清 ${cleaned} 项)`, "user");
         }
       } catch (e) {
-        vscode.window.showErrorMessage(`WAM · ${e.message}`);
+        _notifyError(`WAM · ${e.message}`);
         log(`setCombo error: ${e.stack || e.message}`);
       }
       refreshAll();
@@ -7302,8 +7922,9 @@ async function handleWebviewMessage(msg) {
               const result = await switchToAccount(acc.email, acc.password);
               if (result.ok) {
                 _afterSwitchSuccess(bestI, acc.email); // v17.42.2 不变量统一
-                vscode.window.showInformationMessage(
+                _notifyInfo(
                   `WAM: WAM模式启动，自动登录 ${result.account}`,
+                  "user",
                 );
                 _ensureEngines();
               }
@@ -7316,8 +7937,9 @@ async function handleWebviewMessage(msg) {
       if (newMode === "official") {
         // cleanupThirdPartyState is now async (includes windsurf.logout)
         const cleaned = await cleanupThirdPartyState();
-        vscode.window.showInformationMessage(
+        _notifyInfo(
           `WAM: 官方模式 — WAM会话已登出，${cleaned}项清理完成。请用Windsurf原生登录您自己的账号`,
+          "user",
         );
       }
       refreshAll();
@@ -7865,8 +8487,9 @@ async function doAutoRotate(store) {
       const hrsD = hoursUntilDailyReset();
       const hrsW = hoursUntilWeeklyReset();
       const droughtTag = drought ? " [🏜️干旱模式·只看D]" : "";
-      vscode.window.showInformationMessage(
+      _notifyInfo(
         `WAM: 当前账号可用 D${Math.round(h.daily)}%·W${Math.round(h.weekly)}% | 日重置${hrsD.toFixed(1)}h·周重置${hrsW.toFixed(1)}h${droughtTag}`,
+        "user",
       );
       return;
     }
@@ -7878,7 +8501,7 @@ async function doAutoRotate(store) {
     const msg = drought
       ? `WAM: 🏜️干旱模式·D+W全面耗尽 (日重置${hrsD.toFixed(1)}h后·周重置${hrsW.toFixed(1)}h后)`
       : `WAM: 无可用账号 (日重置在${hrsD.toFixed(1)}h后)`;
-    vscode.window.showWarningMessage(msg);
+    _notifyWarn(msg, "user");
     return;
   }
   const acc = store.get(bestI);
@@ -7886,8 +8509,9 @@ async function doAutoRotate(store) {
   if (_switching) {
     const lockAge = Date.now() - _switchingStartTime;
     if (lockAge < 30000) {
-      vscode.window.showWarningMessage(
+      _notifyWarn(
         `WAM: 正在切换中(${Math.round(lockAge / 1000)}s)...请稍候`,
+        "user",
       );
       return;
     }
@@ -7903,12 +8527,13 @@ async function doAutoRotate(store) {
     if (result.ok) {
       _afterSwitchSuccess(bestI, acc.email); // v17.42.2 不变量统一
       const droughtTag = drought ? " [干旱·D轮换]" : "";
-      vscode.window.showInformationMessage(
+      _notifyInfo(
         `WAM: 智能轮转到 ${result.account} (${result.ms}ms)${droughtTag}`,
+        "user",
       );
       _ensureEngines();
     } else {
-      vscode.window.showErrorMessage(`WAM: 轮转失败 — ${result.error}`);
+      _notifyError(`WAM: 轮转失败 — ${result.error}`);
     }
   } finally {
     _switching = false;
@@ -8216,6 +8841,12 @@ function activate(context) {
     `activate v${WAM_VERSION}-\u9053\u6cd5\u81ea\u7136 — inst=${_instanceId} product=${PRODUCT_NAME} dataDir=${DATA_DIR} \u7edf\u4e00\u4ee3\u7406\u63cf\u8ff0\u7b26\u00b7\u96f6\u786e\u5b9a\u672c\u6e90`,
   );
 
+  // ── v17.42.6: 死代理 env 自净 — 所有网络 op 启动前先净化 env ──
+  // fire-and-forget: 异步 TCP 验活 2s · 不阻塞 activate · 结果在 log 中可见
+  //   若 env 中 HTTPS_PROXY 指向已停机代理 (如 192.168.31.141:17890) · 立即剔除
+  //   剔除仅对本 Node 进程生效 · 不污染用户系统配置 · _detectProxy 自扫 localhost 兜底
+  _purgeDeadEnvProxy().catch((e) => log(`env-proxy purge err: ${e.message}`));
+
   const gsPath =
     context.globalStorageUri?.fsPath ||
     path.join(DATA_DIR, "User", "globalStorage");
@@ -8334,8 +8965,9 @@ function activate(context) {
         if (_switching) {
           const lockAge = Date.now() - _switchingStartTime;
           if (lockAge < 30000) {
-            vscode.window.showWarningMessage(
+            _notifyWarn(
               `WAM: 正在切换中(${Math.round(lockAge / 1000)}s)...请稍候`,
+              "user",
             );
             return;
           }
@@ -8357,9 +8989,7 @@ function activate(context) {
             _snapshotDirty = true;
             _schedulePersist();
             _store.save();
-            vscode.window.showInformationMessage(
-              `WAM: 已手动切换到 ${result.account}`,
-            );
+            _notifyInfo(`WAM: 已手动切换到 ${result.account}`, "user");
             _ensureEngines();
           }
         } finally {
@@ -8372,9 +9002,7 @@ function activate(context) {
       _store.load();
       _store.lastRefresh = Date.now();
       refreshAll();
-      vscode.window.showInformationMessage(
-        `WAM: 已刷新 ${_store.pwCount()} 个账号`,
-      );
+      _notifyInfo(`WAM: 已刷新 ${_store.pwCount()} 个账号`, "user");
     }),
     // v17.3 道法自然: 从归档恢复 — 挽救被秒删的账号
     vscode.commands.registerCommand("wam.restore", async () => {
@@ -8383,7 +9011,7 @@ function activate(context) {
         "_wam_purged.json",
       );
       if (!fs.existsSync(archPath)) {
-        vscode.window.showInformationMessage("WAM: 归档文件不存在, 无可恢复");
+        _notifyInfo("WAM: 归档文件不存在, 无可恢复", "user");
         return;
       }
       let arch = [];
@@ -8391,11 +9019,11 @@ function activate(context) {
         arch = JSON.parse(fs.readFileSync(archPath, "utf8"));
         if (!Array.isArray(arch)) arch = [];
       } catch (e) {
-        vscode.window.showErrorMessage(`WAM: 归档文件解析失败: ${e.message}`);
+        _notifyError(`WAM: 归档文件解析失败: ${e.message}`);
         return;
       }
       if (arch.length === 0) {
-        vscode.window.showInformationMessage("WAM: 归档为空");
+        _notifyInfo("WAM: 归档为空", "user");
         return;
       }
       // 按归档时间倒序
@@ -8454,8 +9082,9 @@ function activate(context) {
       }
       _store.save();
       refreshAll();
-      vscode.window.showInformationMessage(
+      _notifyInfo(
         `WAM: 已恢复 ${restored} 个账号 (${dup} 个与池中重复已跳过). 可重新测试登录.`,
+        "user",
       );
     }),
     // v17.3 道法自然: 写盘诊断 — 主动探查 save 失败根因
@@ -8594,9 +9223,8 @@ function activate(context) {
       const msg = saveDetection.saveWorked
         ? `WAM 写盘诊断: save() OK (内存${memCount} 磁盘${diskCount})`
         : `WAM 写盘诊断: save() 未更新 mtime! 检查 checks[*].existingWrite 和 error 字段`;
-      (saveDetection.saveWorked
-        ? vscode.window.showInformationMessage
-        : vscode.window.showWarningMessage)(msg);
+      if (saveDetection.saveWorked) _notifyInfo(msg, "user");
+      else _notifyWarn(msg, "user");
     }),
     // v17.5 道法自然: 一键复活 — 清空内存黑名单 + 重置失败计数 + Devin 探测
     vscode.commands.registerCommand("wam.clearBlacklist", async () => {
@@ -8611,8 +9239,9 @@ function activate(context) {
           a._authSystem !== "devin" &&
           (a._verifyFailed || a._verifyFailedCount > 0),
       );
-      vscode.window.showInformationMessage(
+      _notifyInfo(
         `WAM: 清空内存黑名单 (原 ${before}), 对 ${targets.length} 个疑似账号做 Devin 探测...`,
+        "user",
       );
       let devinCount = 0,
         errCount = 0;
@@ -8661,8 +9290,9 @@ function activate(context) {
       }
       _store.save();
       refreshAll();
-      vscode.window.showInformationMessage(
+      _notifyInfo(
         `WAM: 复活完成 — ${devinCount} 个 Devin-only 已识别, ${errCount} 个仍需检查, 池已解锁`,
+        "user",
       );
     }),
     // v17.5 Level 2: Devin 切号链路诊断 — 不真正注入, 仅验证链路完整
@@ -8677,21 +9307,19 @@ function activate(context) {
           password: a.password,
         }));
       if (picks.length === 0) {
-        vscode.window.showWarningMessage("WAM: 账号池为空");
+        _notifyWarn("WAM: 账号池为空", "user");
         return;
       }
       const pick = await vscode.window.showQuickPick(picks, {
         placeHolder: "选择要测试 Devin 切号链路的账号 (仅验证, 不注入)",
       });
       if (!pick) return;
-      vscode.window.showInformationMessage(
-        `WAM: 测试 ${pick.email} Devin 链路...`,
-      );
+      _notifyInfo(`WAM: 测试 ${pick.email} Devin 链路...`, "user");
       const t0 = Date.now();
       // Step 1: devinLogin
       const dl = await _devinLogin(pick.email, pick.password);
       if (!dl.ok) {
-        vscode.window.showErrorMessage(
+        _notifyError(
           `WAM 测试: ${pick.email} 登录失败 (${dl.error}) — 此账号不在 Devin 体系 [${Date.now() - t0}ms]`,
         );
         return;
@@ -8699,7 +9327,7 @@ function activate(context) {
       // Step 2: WindsurfPostAuth
       const pa = await _devinPostAuth(dl.auth1Token);
       if (!pa.ok) {
-        vscode.window.showErrorMessage(
+        _notifyError(
           `WAM 测试: ${pick.email} PostAuth 失败 (${pa.error}) — 登录通但换 sessionToken 失败 [${Date.now() - t0}ms]`,
         );
         return;
@@ -8739,16 +9367,17 @@ function activate(context) {
         }
         return;
       }
-      vscode.window.showInformationMessage(`WAM: 正在检查更新 (${source})...`);
+      _notifyInfo(`WAM: 正在检查更新 (${source})...`, "user");
       const r = await _autoUpdateCheck(true);
       if (r.ok && r.updated) {
         // Step 3 内部已显示通知
       } else if (r.ok && !r.updated) {
-        vscode.window.showInformationMessage(
+        _notifyInfo(
           `WAM: 当前 v${r.localVer} 已是最新 (远端 v${r.remoteVer})`,
+          "user",
         );
       } else {
-        vscode.window.showErrorMessage(
+        _notifyError(
           `WAM: 更新失败 · ${r.reason || "unknown"}${r.error ? " (" + r.error + ")" : ""}`,
         );
       }
@@ -8764,17 +9393,14 @@ function activate(context) {
       if (input) {
         const r = _store.addBatch(input);
         refreshAll();
-        if (r.added > 0)
-          vscode.window.showInformationMessage(`WAM: 添加了 ${r.added} 个账号`);
-        else vscode.window.showWarningMessage(`WAM: 无法识别格式或账号已存在`);
+        if (r.added > 0) _notifyInfo(`WAM: 添加了 ${r.added} 个账号`, "user");
+        else _notifyWarn(`WAM: 无法识别格式或账号已存在`, "user");
       }
     }),
     vscode.commands.registerCommand("wam.autoRotate", async () => {
       // 官方模式下智能轮转被禁用
       if (!isWamMode()) {
-        vscode.window.showWarningMessage(
-          "WAM: 官方模式下智能轮转已禁用，请先切回WAM模式",
-        );
+        _notifyWarn("WAM: 官方模式下智能轮转已禁用，请先切回WAM模式", "user");
         return;
       }
       await doAutoRotate(_store);
@@ -8794,7 +9420,7 @@ function activate(context) {
       }
       const bestI = _store.getBestIndex(_store.activeIndex, false); // 紧急切换不跳过使用中
       if (bestI < 0) {
-        vscode.window.showErrorMessage("WAM: 无可用账号");
+        _notifyError("WAM: 无可用账号");
         return;
       }
       const acc = _store.get(bestI);
@@ -8812,8 +9438,9 @@ function activate(context) {
         if (result.ok) {
           _afterSwitchSuccess(bestI, acc.email); // v17.42.2 不变量统一
           _writeInstanceClaim(acc.email);
-          vscode.window.showInformationMessage(
+          _notifyInfo(
             `WAM: 紧急切换到 ${result.account} (${result.ms}ms)`,
+            "user",
           );
           _ensureEngines();
         }
@@ -8824,7 +9451,7 @@ function activate(context) {
     }),
     vscode.commands.registerCommand("wam.injectToken", async () => {
       if (!fs.existsSync(TOKEN_FILE)) {
-        vscode.window.showWarningMessage("WAM: 无待注入token");
+        _notifyWarn("WAM: 无待注入token", "user");
         return;
       }
       const data = JSON.parse(fs.readFileSync(TOKEN_FILE, "utf8"));
@@ -8833,13 +9460,9 @@ function activate(context) {
         try {
           fs.unlinkSync(TOKEN_FILE);
         } catch {}
-        vscode.window.showInformationMessage(
-          `WAM: 注入成功 — ${result.account}`,
-        );
+        _notifyInfo(`WAM: 注入成功 — ${result.account}`, "user");
       } else {
-        vscode.window.showErrorMessage(
-          `WAM: 注入失败 — ${JSON.stringify(result.error)}`,
-        );
+        _notifyError(`WAM: 注入失败 — ${JSON.stringify(result.error)}`);
       }
       refreshAll();
     }),
@@ -8860,8 +9483,9 @@ function activate(context) {
       if (choice !== "确认回归本源") return;
       saveMode("official");
       const cleaned = await cleanupThirdPartyState();
-      vscode.window.showInformationMessage(
+      _notifyInfo(
         `WAM: 官方模式已激活 — WAM会话已登出，${cleaned}项清理完成。请使用Windsurf原生登录您自己的账号`,
+        "user",
       );
       refreshAll();
     }),
@@ -8885,8 +9509,9 @@ function activate(context) {
             const result = await switchToAccount(acc.email, acc.password);
             if (result.ok) {
               _afterSwitchSuccess(bestI, acc.email); // v17.42.2 不变量统一
-              vscode.window.showInformationMessage(
+              _notifyInfo(
                 `WAM: WAM模式启动，自动登录 ${result.account}`,
+                "user",
               );
               _ensureEngines();
             }
@@ -8897,7 +9522,7 @@ function activate(context) {
           return;
         }
       }
-      vscode.window.showInformationMessage("WAM: WAM切号模式已启动");
+      _notifyInfo("WAM: WAM切号模式已启动", "user");
       refreshAll();
     }),
     vscode.commands.registerCommand("wam.status", () => {
@@ -8910,27 +9535,21 @@ function activate(context) {
       let msg = `WAM v${WAM_VERSION} | ${stats.pwCount}号 D${stats.totalD}·W${stats.totalW} | mode=${_mode} | 监测${_totalMonitorCycles}轮·${_totalChangesDetected}次变动·${_store.switchCount}次切号 | inst=${_instanceId}`;
       if (activeAcc) msg += ` | 活跃: ${activeAcc.email.substring(0, 20)}`;
       if (_store._inUse.size > 0) msg += ` | 使用中: ${inUseEmails}`;
-      vscode.window.showInformationMessage(msg);
+      _notifyInfo(msg, "user");
     }),
     // v17.36 · origin 命令已剥离 (wam.originInvert / wam.originPassthrough / wam.verifyEndToEnd)
     // v17.36 · wam.verifyEndToEnd 已剥离 (所有 10 层皆 origin 专属)
     vscode.commands.registerCommand("wam.verifyEndToEnd", async () => {
-      vscode.window.showInformationMessage(
-        "WAM: E2E 十层自检已移至 020-道VSIX_DaoAgi",
-      );
+      _notifyInfo("WAM: E2E 十层自检已移至 020-道VSIX_DaoAgi", "user");
     }),
     vscode.commands.registerCommand("wam.originInvert", () => {
-      vscode.window.showInformationMessage(
-        "WAM: 道Agent 已移至 020-道VSIX_DaoAgi",
-      );
+      _notifyInfo("WAM: 道Agent 已移至 020-道VSIX_DaoAgi", "user");
     }),
     vscode.commands.registerCommand("wam.originPassthrough", () => {
-      vscode.window.showInformationMessage(
-        "WAM: 道Agent 已移至 020-道VSIX_DaoAgi",
-      );
+      _notifyInfo("WAM: 道Agent 已移至 020-道VSIX_DaoAgi", "user");
     }),
     vscode.commands.registerCommand("wam.selfTest", async () => {
-      vscode.window.showInformationMessage("WAM: 自诊断运行中...");
+      _notifyInfo("WAM: 自诊断运行中...", "user");
       const result = await selfTest();
       const lines = result.results.map(
         (r) => `${r.ok ? "✓" : "✗"} ${r.test}: ${r.detail}`,
@@ -8998,8 +9617,9 @@ function activate(context) {
               _predictiveCandidate = _store.getBestIndex(bestI, true);
               if (_predictiveCandidate >= 0)
                 _prewarmCandidateToken(_predictiveCandidate);
-              vscode.window.showInformationMessage(
+              _notifyInfo(
                 `WAM: 🚨 Rate-limit拦截 → 已无感切换到 ${sr.account} (${sr.ms}ms)`,
+                "auto",
               );
               refreshAll();
             } else {
